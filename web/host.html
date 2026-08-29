@@ -38,6 +38,12 @@
     display: block; background: #fff; padding: 14px; border-radius: 16px;
     border: 1px solid var(--line);
   }
+  .qr.placeholder {
+    background: transparent; border-style: dashed;
+    aspect-ratio: 1; display: grid; place-items: center;
+    color: var(--muted); font-size: 14px;
+  }
+  .pending { opacity: .75; }
   .label { margin: 0 0 6px; font-size: 15px; font-weight: 650; }
   .url {
     display: inline-block; max-width: 100%;
@@ -90,6 +96,12 @@
         <p class="label">Anywhere else</p>
         <a class="url small" href="{{.InternetURL}}">{{.InternetHost}}</a>
         <p class="note">Works off-network · {{.InternetLimit}} per batch · link expires when the server restarts</p>
+      </div>
+      {{else}}
+      <div class="code pending" id="pending" hidden>
+        <div class="qr placeholder"><span>Connecting…</span></div>
+        <p class="label">Anywhere else</p>
+        <p class="note">Setting up the internet link. This takes a moment.</p>
       </div>
       {{end}}
     </div>
@@ -172,6 +184,28 @@ function refresh() {
 
 refresh();
 setInterval(refresh, 3000);
+
+// The tunnel comes up in the background, so this page may have rendered before
+// the second code existed. Show a placeholder while waiting, then reload once
+// the server says the link is live.
+(function () {
+  var pending = document.getElementById('pending');
+  if (!pending) return;              // the code is already on the page
+
+  var waited = 0;
+  var timer = setInterval(function () {
+    fetch('/status').then(function (r) { return r.json(); }).then(function (s) {
+      if (s.internet) { clearInterval(timer); location.reload(); return; }
+      waited += 2;
+      if (waited >= 90) {            // it is not coming; stop nagging
+        clearInterval(timer);
+        pending.hidden = true;
+      }
+    }).catch(function () { /* server restarting; try again next tick */ });
+  }, 2000);
+
+  pending.hidden = false;
+})();
 </script>
 </body>
 </html>

@@ -48,7 +48,7 @@ var (
 	flagMaxMB = flag.Int64("max", 10240, "maximum size of a single upload batch in MB (0 for no limit)")
 	flagOpen  = flag.Bool("open", true, "open each finished batch in Windows Explorer")
 
-	flagTunnel     = flag.Bool("tunnel", false, "also publish the page on the internet with a Cloudflare quick tunnel")
+	flagWifiOnly   = flag.Bool("wifi-only", false, "stay on the local network: do not publish an internet link")
 	flagPublic     = flag.String("public", "", "public HTTPS address to advertise, if you run your own tunnel")
 	flagPublicPort = flag.Int("public-port", 0, "local port the internet listener uses (defaults to -port + 1)")
 	flagToken      = flag.String("token", "", "access code for internet uploads (a random one is made when empty)")
@@ -118,13 +118,37 @@ func main() {
 		w.Write(indexHTML)
 	})
 
-	// Filled in below if the internet route is switched on.
-	hostData := map[string]string{"URL": publicURL, "Root": root}
+	// The internet details arrive later, once the tunnel has come up, so the
+	// operator's screen reads them behind a lock.
+	var (
+		hostMu      sync.RWMutex
+		internetURL string
+		internetQR  []byte
+	)
+	hostSnapshot := func() map[string]string {
+		hostMu.RLock()
+		defer hostMu.RUnlock()
+		data := map[string]string{"URL": publicURL, "Root": root}
+		if internetURL != "" {
+			data["InternetURL"] = internetURL
+			data["InternetHost"] = strings.TrimPrefix(strings.SplitN(internetURL, "/?k=", 2)[0], "https://")
+			data["InternetLimit"] = humanSize(cloudflareBodyLimit)
+		}
+		return data
+	}
 
 	mux.HandleFunc("/host", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		hostTmpl.Execute(w, hostData)
+		hostTmpl.Execute(w, hostSnapshot())
+	})
+
+	// Lets the operator's screen notice the tunnel finishing after page load.
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		hostMu.RLock()
+		ready := internetURL != ""
+		hostMu.RUnlock()
+		writeJSON(w, http.StatusOK, map[string]any{"internet": ready})
 	})
 
 	mux.HandleFunc("/qr.png", func(w http.ResponseWriter, r *http.Request) {
@@ -163,15 +187,13 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	// The internet route, when asked for. It listens only on loopback: the
-	// tunnel is the sole way in, so public traffic always meets the access
-	// gate while people on the LAN carry on using the plain address.
-	var (
-		internetURL string
-		tunnel      *exec.Cmd
-		internetQR  []byte
-	)
-	if *flagTunnel || *flagPublic != "" {
+	// The internet route, unless asked to stay local. It listens only on
+	// loopback: the tunnel is the sole way in, so public traffic always meets
+	// the access gate while people on the LAN carry on using the plain address.
+	var tunnel *exec.Cmd
+	tunnelPending := false
+
+	if !*flagWifiOnly {
 		token := *flagToken
 		if token == "" {
 			token = randomToken()
@@ -185,42 +207,61 @@ func main() {
 			Handler:           publicGate(token, logRequests(mux)),
 			ReadHeaderTimeout: 20 * time.Second,
 		}
+
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", publicPort))
 		if err != nil {
-			log.Fatalf("cannot open the internet listener on port %d: %v", publicPort, err)
-		}
-		go func() {
-			if err := gated.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Printf("internet listener stopped: %v", err)
+			// Not fatal: the local network is the main event and must still work.
+			log.Printf("no internet link - port %d is not free (%v). Local uploads are unaffected.", publicPort, err)
+		} else {
+			go func() {
+				if err := gated.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					log.Printf("internet listener stopped: %v", err)
+				}
+			}()
+
+			publish := func(base string) {
+				url := strings.TrimRight(base, "/") + "/?k=" + token
+				var png []byte
+				if code, err := qrcode.New(url, qrcode.Medium); err == nil {
+					png, _ = code.PNG(512)
+				}
+				hostMu.Lock()
+				internetURL, internetQR = url, png
+				hostMu.Unlock()
 			}
-		}()
 
-		base := strings.TrimRight(*flagPublic, "/")
-		if base == "" {
-			log.Printf("starting the Cloudflare tunnel...")
-			base, tunnel, err = startTunnel(publicPort)
-			if err != nil {
-				log.Fatalf("could not start the tunnel: %v", err)
+			if *flagPublic != "" {
+				publish(*flagPublic)
+			} else {
+				// Bringing the tunnel up takes the better part of a minute, so it
+				// happens in the background: the LAN page is usable immediately and
+				// the second QR code appears on /host when it is ready.
+				tunnelPending = true
+				go func() {
+					base, cmd, err := startTunnel(publicPort)
+					if err != nil {
+						log.Printf("no internet link: %v", err)
+						log.Printf("local uploads are unaffected; use -wifi-only to stop trying")
+						return
+					}
+					tunnel = cmd
+					publish(base)
+					log.Printf("internet link ready: %s", base)
+				}()
 			}
 		}
-		internetURL = base + "/?k=" + token
-
-		if code, err := qrcode.New(internetURL, qrcode.Medium); err == nil {
-			internetQR, _ = code.PNG(512)
-		}
-
-		hostData["InternetURL"] = internetURL
-		hostData["InternetHost"] = strings.TrimPrefix(base, "https://")
-		hostData["InternetLimit"] = humanSize(cloudflareBodyLimit)
 	}
 
 	mux.HandleFunc("/qr-internet.png", func(w http.ResponseWriter, r *http.Request) {
-		if internetQR == nil {
+		hostMu.RLock()
+		png := internetQR
+		hostMu.RUnlock()
+		if png == nil {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "image/png")
-		w.Write(internetQR)
+		w.Write(png)
 	})
 
 	srv := &http.Server{
@@ -235,13 +276,20 @@ func main() {
 	fmt.Print("\n" + qr.ToSmallString(false) + "\n")
 	fmt.Printf("  File Drop is running\n\n")
 	fmt.Printf("  On this network:               %s\n", publicURL)
-	if internetURL != "" {
+	switch {
+	case *flagWifiOnly:
+		fmt.Printf("  From anywhere:                 off (-wifi-only)\n")
+	case tunnelPending:
+		fmt.Printf("  From anywhere:                 starting, appears on /host shortly\n")
+	default:
+		hostMu.RLock()
 		fmt.Printf("  From anywhere:                 %s\n", internetURL)
+		hostMu.RUnlock()
 	}
 	fmt.Printf("  Both codes on one screen:      http://localhost:%d/host\n", *flagPort)
 	fmt.Printf("  Printable QR image:            %s\n", qrPath)
 	fmt.Printf("  Uploads land in:               %s\\<date>_<time>\\\n", root)
-	if internetURL != "" {
+	if !*flagWifiOnly {
 		fmt.Printf("\n  The internet address changes every restart, and Cloudflare caps\n")
 		fmt.Printf("  uploads at %s over that route. The local one is unlimited.\n", humanSize(cloudflareBodyLimit))
 	}

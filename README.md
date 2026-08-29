@@ -50,7 +50,7 @@ the wall. Both point at the same address.
 | `-host` | auto | Address baked into the QR code |
 | `-max` | `10240` | Largest single batch, in MB (`0` = no limit) |
 | `-open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
-| `-tunnel` | `false` | Also publish on the internet via a Cloudflare quick tunnel |
+| `-wifi-only` | `false` | Stay on the LAN; publish no internet link at all |
 | `-public` | — | Advertise this HTTPS address instead of starting a tunnel |
 | `-public-port` | `-port` + 1 | Loopback port the internet listener uses |
 | `-token` | random | Access code for the internet route |
@@ -85,15 +85,20 @@ Then print `qr-code.png` once and reuse it with every client.
 
 ## Off-network clients
 
-By default the server is local-only. Add `-tunnel` and it also publishes itself
-on the internet through a Cloudflare quick tunnel, so a client who is nowhere
-near your Wi-Fi can still send you files:
+By default the server publishes itself on the internet as well as the LAN,
+through a Cloudflare quick tunnel, so a client who is nowhere near your Wi-Fi
+can still send you files. To stay purely local:
 
 ```bash
-.\file-drop-server.exe -tunnel
+.\file-drop-server.exe -wifi-only
 ```
 
-`/host` then shows **two** QR codes — "On my Wi-Fi" and "Anywhere else". Clients
+The tunnel comes up in the background — the local page and uploads work
+immediately, within about a second, and the second QR code appears on `/host`
+on its own a few seconds later. If cloudflared is missing or the tunnel cannot
+be established, the server says so once and carries on serving the LAN.
+
+`/host` shows **two** QR codes — "On my Wi-Fi" and "Anywhere else". Clients
 in the room scan the first and get full LAN speed with no size limit; remote
 clients get the second.
 
@@ -221,9 +226,11 @@ On the LAN there is no password: anyone who can reach this machine can upload to
 it, over plain HTTP. That is the right trade-off on a home or office network
 with a client sitting in front of you.
 
-Do not port-forward the LAN port to the internet. Use `-tunnel` instead — it
-gives you HTTPS, an access code, and a loopback-only listener, none of which you
-get from a forwarded port.
+Because the tunnel is on by default, **each run publishes an upload page on the
+internet**. It is guarded — a random access code, HTTPS, a loopback-only
+listener, and only `/` and `/upload` exposed — but it is reachable by anyone
+holding the link, so treat that link as a capability. Restarting rotates the
+code and kills the old address. Use `-wifi-only` when you want none of it.
 
-Even so, treat the internet link as a capability: anyone holding it can upload
-until you restart. Restarting rotates the code and kills the old address.
+Do not port-forward the LAN port instead; a forwarded port gives you no HTTPS,
+no access code, and exposes every route.
