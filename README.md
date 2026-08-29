@@ -55,9 +55,10 @@ There is no file until you save one, and there does not have to be: with no
 settings file the defaults below are used. Delete it at any time to go back to
 them.
 
-The drop folder, the batch limit and the Explorer pop-up take effect the moment
-you save. The listeners, the QR codes and the tunnel are built once at start-up,
-so changing the port, the QR address or anything about the internet link needs a
+The drop folder, the batch limit, how many drops are listed and the Explorer
+pop-up take effect the moment you save. The listeners, the QR codes and the
+tunnel are built once at start-up, so changing the port, the QR address or
+anything about the internet link needs a
 restart — those fields are marked **restart to apply**, and the panel tells you
 which ones are waiting on one. Opening this page at start-up is not marked,
 because there is nothing to re-apply: it simply describes what the next start
@@ -86,7 +87,8 @@ falls back to the default.
 | `-port` | `port` | `8080` | Port to listen on |
 | `-dir` | `dir` | `C:\file-drop-server` | Where batches are saved |
 | `-host` | `host` | auto | Address baked into the QR code |
-| `-max` | `max_mb` | `10240` | Largest single batch, in MB (`0` = no limit) |
+| `-max` | `max_mb` | `0` | Largest single batch, in MB (`0` = no limit) |
+| `-recent` | `recent` | `10` | How many of the newest drops `/host` lists (1-500) |
 | `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
 | `-open-host` | `open_host` | `true` | Open `/host` in a browser at start-up (`-open-host=false` to stop) |
 | `-wifi-only` | `wifi_only` | `false` | Stay on the LAN; publish no internet link at all |
@@ -143,9 +145,9 @@ immediately, within about a second, and the second QR code appears on `/host`
 on its own a few seconds later. If cloudflared is missing or the tunnel cannot
 be established, the server says so once and carries on serving the LAN.
 
-`/host` shows **two** QR codes — "On my Wi-Fi" and "Anywhere else". Clients
-in the room scan the first and get full LAN speed with no size limit; remote
-clients get the second.
+`/host` shows **two** QR codes — "Send over Local Area Network" and "Send over
+Internet". Clients in the room scan the first and get full LAN speed with no
+size limit; remote clients get the second.
 
 It has to be two codes. The internet route is HTTPS, and a browser will not let
 an HTTPS page talk to `http://10.0.0.10:8080`, so a page loaded from the
@@ -250,6 +252,9 @@ and nothing pops up.
 On `/host`, every folder in **Recent drops** is clickable and opens that batch in
 Explorer. A browser will not follow a `file://` link from an `http://` page, so
 the click goes back to the server, which opens the window itself.
+
+The ten newest batches are listed. Older ones are still on disk — the list is
+just the tail of it. Change how many with `-recent`, or from the settings panel.
 
 ## Notes on how it behaves
 

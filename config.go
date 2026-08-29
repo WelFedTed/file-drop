@@ -26,6 +26,7 @@ type Settings struct {
 	Dir        string `json:"dir"`
 	Host       string `json:"host"`
 	MaxMB      int64  `json:"max_mb"`
+	Recent     int    `json:"recent"`
 	Open       bool   `json:"open"`
 	OpenHost   bool   `json:"open_host"`
 	WifiOnly   bool   `json:"wifi_only"`
@@ -39,7 +40,8 @@ type Settings struct {
 const (
 	defaultPort     = 8080
 	defaultDir      = `C:\file-drop-server`
-	defaultMaxMB    = 10240
+	defaultMaxMB    = 0
+	defaultRecent   = 10
 	defaultOpen     = true
 	defaultOpenHost = true
 
@@ -52,6 +54,7 @@ func defaultSettings() Settings {
 		Port:     defaultPort,
 		Dir:      defaultDir,
 		MaxMB:    defaultMaxMB,
+		Recent:   defaultRecent,
 		Open:     defaultOpen,
 		OpenHost: defaultOpenHost,
 	}
@@ -152,6 +155,8 @@ func (s *Settings) applyFlags() {
 			s.Host = *flagHost
 		case "max":
 			s.MaxMB = *flagMaxMB
+		case "recent":
+			s.Recent = *flagRecent
 		case "open":
 			s.Open = *flagOpen
 		case "open-host":
@@ -197,6 +202,12 @@ func (s *Settings) normalise() error {
 	}
 	if s.MaxMB < 0 {
 		return errors.New("the largest batch cannot be negative - use 0 for no limit")
+	}
+	// The page asks for this list every three seconds and each entry means
+	// walking a batch folder, so the ceiling is there to stop a stray number
+	// making the operator's own screen the slowest thing on the machine.
+	if s.Recent < 1 || s.Recent > 500 {
+		return fmt.Errorf("recent drops has to be between 1 and 500, not %d", s.Recent)
 	}
 	if strings.ContainsAny(s.Host, " \t/\\:") {
 		return fmt.Errorf("%q is not an address - give a name or an IP, with no port", s.Host)
@@ -274,6 +285,8 @@ func (s Settings) toTOML() []byte {
 		"host", tomlString(s.Host))
 	entry("Largest single upload batch, in MB. 0 removes the limit.",
 		"max_mb", strconv.FormatInt(s.MaxMB, 10))
+	entry("How many of the newest drop folders /host lists.",
+		"recent", strconv.Itoa(s.Recent))
 	entry("Open each finished batch in Windows Explorer.",
 		"open", strconv.FormatBool(s.Open))
 	entry("Open the QR code page in a browser when the program starts.",
@@ -305,6 +318,8 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignString(&s.Host, key, value)
 		case "max_mb":
 			err = assignInt64(&s.MaxMB, key, value)
+		case "recent":
+			err = assignInt(&s.Recent, key, value)
 		case "open":
 			err = assignBool(&s.Open, key, value)
 		case "open_host":

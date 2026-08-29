@@ -181,6 +181,11 @@
           <span class="hint">In MB; 0 for no limit. The internet route is capped at 100 MB either way.</span>
         </label>
 
+        <label class="field">
+          <span class="name">Recent drops shown</span>
+          <input name="recent" type="number" min="1" max="500" step="1" inputmode="numeric">
+          <span class="hint">How many of the newest batches this page lists, from 1 to 500.</span>
+        </label>
       </fieldset>
 
       <fieldset>
@@ -262,7 +267,7 @@
     <div class="codes{{if .InternetURL}} two{{end}}">
       <div class="code">
         <img class="qr" src="/qr.png" alt="QR code for the local network upload page">
-        <p class="label">On my Wi-Fi</p>
+        <p class="label">Send over Local Area Network</p>
         <a class="url" href="{{.URL}}">{{.URL}}</a>
         <p class="note">Full speed, no size limit</p>
       </div>
@@ -270,14 +275,14 @@
       {{if .InternetURL}}
       <div class="code">
         <img class="qr" src="/qr-internet.png" alt="QR code for the internet upload page">
-        <p class="label">Anywhere else</p>
+        <p class="label">Send over Internet</p>
         <a class="url small" href="{{.InternetURL}}">{{.InternetHost}}</a>
         <p class="note">Works off-network · {{.InternetLimit}} per batch · link expires when the server restarts</p>
       </div>
       {{else if .Pending}}
       <div class="code pending" id="pending" hidden>
         <div class="qr placeholder"><span>Connecting…</span></div>
-        <p class="label">Anywhere else</p>
+        <p class="label">Send over Internet</p>
         <p class="note">Setting up the internet link. This takes a moment.</p>
       </div>
       {{end}}
@@ -379,6 +384,7 @@ setInterval(refresh, 3000);
   function fill(s) {
     field('dir').value = s.dir || '';
     field('max_mb').value = s.max_mb;
+    field('recent').value = s.recent;
     field('open').checked = !!s.open;
     field('open_host').checked = !!s.open_host;
     field('port').value = s.port;
@@ -393,6 +399,7 @@ setInterval(refresh, 3000);
     return {
       dir: field('dir').value,
       max_mb: Number(field('max_mb').value || 0),
+      recent: Number(field('recent').value || 0),
       open: field('open').checked,
       open_host: field('open_host').checked,
       port: Number(field('port').value || 0),

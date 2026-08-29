@@ -49,6 +49,7 @@ var (
 	flagDir      = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
 	flagHost     = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
 	flagMaxMB    = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
+	flagRecent   = flag.Int("recent", defaultRecent, "how many of the newest drop folders /host lists")
 	flagOpen     = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
 	flagOpenHost = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
 
@@ -182,7 +183,8 @@ func main() {
 	mux.HandleFunc("/upload", handleUpload)
 
 	mux.HandleFunc("/batches", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(currentSettings().Dir, 15)})
+		cfg := currentSettings()
+		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(cfg.Dir, cfg.Recent)})
 	})
 
 	// The settings panel behind the cog on /host. It is deliberately absent
