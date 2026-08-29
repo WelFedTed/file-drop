@@ -11,3 +11,7 @@ const cloudflaredInstallSupported = false
 func installCloudflared() error {
 	return errors.New("installing cloudflared from the page is only supported on Windows")
 }
+
+// Nothing to refresh: only Windows keeps the PATH somewhere a running process
+// cannot see changes to.
+func refreshExecPathOnce() {}

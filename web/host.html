@@ -18,6 +18,11 @@
     }
   }
   * { box-sizing: border-box; }
+  /* The hidden attribute is only "display: none" in the browser's own
+     stylesheet, so any class here that sets display beats it - and an element
+     asked to be absent ends up merely transparent-looking but laid out. This
+     puts it back. */
+  [hidden] { display: none !important; }
   body {
     margin: 0; padding: 40px 20px; background: var(--bg); color: var(--ink);
     font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -85,6 +90,18 @@
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--muted); font-size: 15px; margin: 0; }
   .path { color: var(--muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+  .foot {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px; padding: 0 6px 4px; font-size: 13px;
+  }
+  .foot a {
+    color: var(--muted); text-decoration: none;
+    border-bottom: 1px solid transparent; transition: color .12s, border-color .12s;
+  }
+  .foot a:hover, .foot a:focus-visible {
+    color: var(--accent); border-bottom-color: currentColor; outline: none;
+  }
+  .foot a:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
   /* Settings: a cog in the corner of the screen, opening a sheet over the page. */
   .cog {
@@ -431,6 +448,11 @@
     <div id="recent"><p class="empty">Nothing yet — uploads will appear here.</p></div>
     <p class="path" style="margin-top:18px">Saving to <span id="root-path">{{.Root}}</span></p>
   </section>
+
+  <footer class="foot">
+    <a href="{{.Repo}}" target="_blank" rel="noopener">File Drop</a>
+    <a href="{{.Changelog}}" target="_blank" rel="noopener">v{{.Version}}</a>
+  </footer>
 
 </div>
 

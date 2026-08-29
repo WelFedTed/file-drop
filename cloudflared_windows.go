@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,16 +42,7 @@ try {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	if _, err := runPowerShell(ctx, script); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 5 {
-			return errors.New("the administrator prompt was dismissed, so nothing was installed")
-		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return errors.New("the install did not finish in ten minutes and was given up on")
-		}
-		return errors.New("winget could not install cloudflared: " + err.Error())
-	}
+	_, runErr := runPowerShell(ctx, script)
 
 	// An installer that puts itself on the PATH changes the registry, not this
 	// process: our copy was inherited at start-up and will never see the new
@@ -59,11 +51,30 @@ try {
 	// restarting. Re-reading the registry here fixes both at once.
 	refreshPathFromRegistry()
 
-	if _, err := cloudflaredPath(); err != nil {
-		return errors.New("cloudflared installed but still cannot be found on the PATH - a sign-out or reboot may be needed")
+	// What matters is whether the client is there now, not what winget's exit
+	// code said. It reports a failure when the package is already present and
+	// has no upgrade, which is not a failure of the thing being asked for.
+	if _, err := cloudflaredPath(); err == nil {
+		return nil
 	}
-	return nil
+
+	if runErr != nil {
+		var exit *exec.ExitError
+		if errors.As(runErr, &exit) && exit.ExitCode() == 5 {
+			return errors.New("the administrator prompt was dismissed, so nothing was installed")
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("the install did not finish in ten minutes and was given up on")
+		}
+		return errors.New("winget could not install cloudflared: " + runErr.Error())
+	}
+	return errors.New("cloudflared installed but still cannot be found on the PATH - a sign-out or reboot may be needed")
 }
+
+// refreshExecPathOnce re-reads the PATH from the registry at most once for the
+// life of the process, for the case where something was installed before this
+// program started but after the PATH it inherited was handed to it.
+var refreshExecPathOnce = sync.OnceFunc(refreshPathFromRegistry)
 
 // refreshPathFromRegistry rebuilds PATH from where Windows actually keeps it,
 // rather than from what this process was handed when it started.

@@ -37,7 +37,7 @@ It prints a scannable QR code straight into the terminal, along with:
 | Upload page for clients | `http://<your-lan-ip>:8080/` |
 | Big QR code to show on screen | `http://localhost:8080/host` |
 | Printable QR image | `C:\file-drop-server\qr-code.png` |
-| Settings file | `file-drop-server.toml`, beside the program |
+| Settings file | `file-drop.toml`, beside the program |
 
 `/host` opens in your browser on its own as the server starts, so the codes are
 on screen without you typing anything — turn that off with `-open-host=false`,
@@ -48,12 +48,17 @@ wall. Both point at the same address.
 ## Settings
 
 Everything the server can be told to do is behind the **cog in the top right of
-`/host`** — no need to remember a flag. Saving writes a `file-drop-server.toml`
+`/host`** — no need to remember a flag. Saving writes a `file-drop.toml`
 next to the program, which is read the next time it starts.
 
 There is no file until you save one, and there does not have to be: with no
 settings file the defaults below are used. Delete it at any time to go back to
 them.
+
+> The file was called `file-drop-server.toml` before v0.4.0, when the program
+> itself was renamed. One still sitting beside the executable is read as before,
+> and noted at start-up; the next save writes `file-drop.toml` and that one wins
+> from then on. Nothing is deleted for you.
 
 The drop folder, the batch limit, how many drops are listed and the Explorer
 pop-up take effect the moment you save. The listeners, the QR codes and the
@@ -136,6 +141,10 @@ start. Restart to finish; the page offers the button and reloads itself.
 
 Turn the whole thing off with `-check-updates=false`, or from the settings
 panel, if you would rather it did not talk to GitHub at all.
+
+The version is on screen in two other places: after `File Drop is running` in
+the terminal, and in the footer of `/host`, where the program name links to the
+repository and the version links to the releases.
 
 ### Releasing
 

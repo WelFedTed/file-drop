@@ -189,7 +189,15 @@ func main() {
 	hostSnapshot := func() map[string]string {
 		hostMu.RLock()
 		defer hostMu.RUnlock()
-		data := map[string]string{"URL": publicURL, "Root": currentSettings().Dir}
+		data := map[string]string{
+			"URL":     publicURL,
+			"Root":    currentSettings().Dir,
+			"Version": version,
+			"Repo":    "https://github.com/" + updateRepo,
+			// Releases are where the changelog actually lives: every one of
+			// them carries its notes.
+			"Changelog": "https://github.com/" + updateRepo + "/releases",
+		}
 		if cfg.InternetOnly {
 			data["LanOff"] = "yes"
 		}
@@ -559,6 +567,7 @@ func main() {
 		fmt.Print("\n")
 	}
 	fmt.Printf("  File Drop is running\n\n")
+	fmt.Printf("  Version:                       %s\n", version)
 	if cfg.InternetOnly {
 		fmt.Printf("  Send over Local Area Network:  off (internet only)\n")
 	} else {
@@ -901,11 +910,19 @@ func restartArgs() []string {
 // promised about an internet link, so that a machine without it says so at
 // once rather than after a placeholder has already gone up on /host.
 func cloudflaredPath() (string, error) {
-	bin, err := exec.LookPath("cloudflared")
-	if err != nil {
-		return "", errors.New("cloudflared is not installed - run: winget install Cloudflare.cloudflared")
+	if bin, err := exec.LookPath("cloudflared"); err == nil {
+		return bin, nil
 	}
-	return bin, nil
+	// Not on our PATH is not the same as not installed. An installer that adds
+	// itself to the PATH writes that to the registry; this process inherited
+	// its copy when it started and will never see the change - and so will
+	// every process it goes on to spawn. Re-read the registry once before
+	// concluding that something sitting on the disk is missing.
+	refreshExecPathOnce()
+	if bin, err := exec.LookPath("cloudflared"); err == nil {
+		return bin, nil
+	}
+	return "", errors.New("cloudflared is not installed - run: winget install Cloudflare.cloudflared")
 }
 
 // startTunnel runs cloudflared against the internet listener and waits for it

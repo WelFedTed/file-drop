@@ -49,8 +49,12 @@ const (
 	defaultOpenHost = true
 	defaultChecks   = true
 
-	settingsFile = "file-drop-server.toml"
-	qrCodeFile   = "qr-code.png"
+	settingsFile = "file-drop.toml"
+	// What the settings file was called when the program was file-drop-server.
+	// Read when the current name is absent, so a rename of the executable does
+	// not silently throw away someone's saved settings.
+	legacySettingsFile = "file-drop-server.toml"
+	qrCodeFile         = "qr-code.png"
 )
 
 func defaultSettings() Settings {
@@ -108,21 +112,38 @@ func loadSettings() error {
 	}
 	configPath = path
 
+	// Where to read from, which is only ever different from where we write:
+	// settings saved under the old name are honoured once, and the next save
+	// puts them under the new one. An explicit -config is taken literally.
+	readFrom := path
+	if strings.TrimSpace(*flagConfig) == "" {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			legacy := filepath.Join(filepath.Dir(path), legacySettingsFile)
+			if _, err := os.Stat(legacy); err == nil {
+				readFrom = legacy
+			}
+		}
+	}
+
 	s := defaultSettings()
-	switch data, err := os.ReadFile(path); {
+	switch data, err := os.ReadFile(readFrom); {
 	case err == nil:
 		values, err := parseTOML(string(data))
 		if err != nil {
-			return fmt.Errorf("%s: %v", path, err)
+			return fmt.Errorf("%s: %v", readFrom, err)
 		}
 		if err := s.applyTOML(values); err != nil {
-			return fmt.Errorf("%s: %v", path, err)
+			return fmt.Errorf("%s: %v", readFrom, err)
 		}
 		configFound.Store(true)
+		if readFrom != path {
+			log.Printf("note: reading settings from %s; saving will write %s",
+				filepath.Base(readFrom), filepath.Base(path))
+		}
 	case errors.Is(err, os.ErrNotExist):
 		// First run, or the file was deleted on purpose: defaults it is.
 	default:
-		return fmt.Errorf("could not read %s: %v", path, err)
+		return fmt.Errorf("could not read %s: %v", readFrom, err)
 	}
 
 	s.applyFlags()
