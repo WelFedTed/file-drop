@@ -1,8 +1,10 @@
 # File Drop
 
-A small Go server that puts a QR code on your screen. Anyone on the same Wi-Fi
-scans it, picks files or photos on their phone, and the files land on this
-machine in a timestamped folder.
+A small Go server that puts a QR code on your screen. Anyone on the same local
+network scans it, picks files or photos on their phone, and the files land on
+this machine in a timestamped folder. Phones that are not on the network can be
+handed a link that works over the internet instead, so the same page reaches
+them from anywhere.
 
 ```
 C:\file-drop\2026-08-29_16-54-33\
