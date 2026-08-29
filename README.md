@@ -21,13 +21,13 @@ created from the current date and time.
 ## Build
 
 ```bash
-go build -o file-drop-server.exe .
+go build -o builds/file-drop-server.exe .
 ```
 
 ## Run
 
 ```bash
-.\file-drop-server.exe
+.\builds\file-drop-server.exe
 ```
 
 It prints a scannable QR code straight into the terminal, along with:
@@ -98,7 +98,7 @@ falls back to the default.
 | `-config` | — | beside the program | Settings file to read and save |
 
 ```bash
-.\file-drop-server.exe -port 9000 -dir D:\client-uploads -max 20480
+.\builds\file-drop-server.exe -port 9000 -dir D:\client-uploads -max 20480
 ```
 
 A settings file that cannot be understood stops the server with the offending
@@ -117,7 +117,7 @@ forever as long as that address does not change. Two things to do once:
    prefer, bake it in yourself:
 
    ```bash
-   .\file-drop-server.exe -host 192.168.1.50
+   .\builds\file-drop-server.exe -host 192.168.1.50
    ```
 
 2. **Let it through the firewall.** The first run usually pops up a Windows
@@ -150,7 +150,7 @@ through a Cloudflare quick tunnel, so a client who is nowhere near your Wi-Fi
 can still send you files. To stay purely local:
 
 ```bash
-.\file-drop-server.exe -wifi-only
+.\builds\file-drop-server.exe -wifi-only
 ```
 
 The tunnel comes up in the background — the local page and uploads work

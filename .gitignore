@@ -1,4 +1,5 @@
 # Build output
+builds/
 *.exe
 
 # Settings written by the app, beside the executable
