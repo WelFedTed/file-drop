@@ -107,6 +107,9 @@ internet cannot detect the LAN and switch to it. One code cannot cover both.
 
 - It listens on **loopback only**. The tunnel is the sole way in, so public
   traffic always meets the access gate while LAN clients are unaffected.
+- It serves **only the upload page and the upload endpoint**. The operator's
+  screen, the batch listing and `/open` — which puts windows on your desktop —
+  are not reachable from the internet at all.
 - Every internet link carries a random **access code**. It rides inside the QR
   code, so clients never type it; the first request swaps it for a cookie and
   redirects to a clean address. Without it: `403`. Pass `-token` to fix the code
@@ -193,6 +196,10 @@ several; run with `-open=false` if you would rather they did not.
 This needs the server running in your own desktop session. Started as a Windows
 service or a scheduled task with no interactive session, the files still arrive
 and nothing pops up.
+
+On `/host`, every folder in **Recent drops** is clickable and opens that batch in
+Explorer. A browser will not follow a `file://` link from an `http://` page, so
+the click goes back to the server, which opens the window itself.
 
 ## Notes on how it behaves
 

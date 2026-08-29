@@ -52,6 +52,18 @@
   th { font-size: 13px; color: var(--muted); font-weight: 600; }
   td.num, th.num { text-align: right; }
   td.folder { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+  .openlink {
+    -webkit-appearance: none; appearance: none;
+    border: 0; background: transparent; padding: 0;
+    font: inherit; color: var(--ink);
+    cursor: pointer; border-radius: 4px;
+    text-decoration: underline; text-decoration-color: var(--muted);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px; transition: text-decoration-color .12s, color .12s;
+  }
+  .openlink:hover, .openlink:focus-visible {
+    color: var(--accent); text-decoration-color: currentColor; outline: none;
+  }
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--muted); font-size: 15px; margin: 0; }
   .path { color: var(--muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
@@ -99,6 +111,20 @@ function fmt(n) {
   return (n >= 10 ? n.toFixed(0) : n.toFixed(1)) + ' ' + u[i];
 }
 
+// The browser refuses to follow a file:// link from this page, so ask the
+// server - which is running on that very machine - to open Explorer instead.
+function open(folder, el) {
+  var was = el.textContent;
+  fetch('/open?folder=' + encodeURIComponent(folder)).then(function (r) {
+    if (r.ok) return;
+    el.textContent = 'could not open';
+    setTimeout(function () { el.textContent = was; }, 2000);
+  }).catch(function () {
+    el.textContent = 'could not open';
+    setTimeout(function () { el.textContent = was; }, 2000);
+  });
+}
+
 function refresh() {
   fetch('/batches').then(function (r) { return r.json(); }).then(function (data) {
     var box = document.getElementById('recent');
@@ -107,13 +133,40 @@ function refresh() {
       box.innerHTML = '<p class="empty">Nothing yet — uploads will appear here.</p>';
       return;
     }
-    var html = '<table><tr><th>Folder</th><th class="num">Files</th><th class="num">Size</th></tr>';
+    var table = document.createElement('table');
+    var head = document.createElement('tr');
+    head.innerHTML = '<th>Folder</th><th class="num">Files</th><th class="num">Size</th>';
+    table.appendChild(head);
+
     rows.forEach(function (b) {
-      html += '<tr><td class="folder">' + b.folder.replace(/[<&]/g, '') + '</td>'
-            + '<td class="num">' + b.files + '</td>'
-            + '<td class="num">' + fmt(b.bytes) + '</td></tr>';
+      var tr = document.createElement('tr');
+
+      var folderCell = document.createElement('td');
+      folderCell.className = 'folder';
+      var link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'openlink';
+      link.textContent = b.folder;
+      link.title = 'Open this folder in File Explorer';
+      link.onclick = function () { open(b.folder, link); };
+      folderCell.appendChild(link);
+
+      var filesCell = document.createElement('td');
+      filesCell.className = 'num';
+      filesCell.textContent = b.files;
+
+      var sizeCell = document.createElement('td');
+      sizeCell.className = 'num';
+      sizeCell.textContent = fmt(b.bytes);
+
+      tr.appendChild(folderCell);
+      tr.appendChild(filesCell);
+      tr.appendChild(sizeCell);
+      table.appendChild(tr);
     });
-    box.innerHTML = html + '</table>';
+
+    box.innerHTML = '';
+    box.appendChild(table);
   }).catch(function () { /* server restarting; the next poll will pick it up */ });
 }
 

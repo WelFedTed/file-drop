@@ -140,6 +140,29 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(root, 15)})
 	})
 
+	// Opens a batch folder for whoever is sitting at this machine. A browser
+	// will not follow a file:// link from an http:// page, so the click comes
+	// back here and the server opens Explorer itself.
+	mux.HandleFunc("/open", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("folder")
+		if name == "" || name != filepath.Base(name) || name == "." || name == ".." {
+			http.Error(w, "not a batch folder name", http.StatusBadRequest)
+			return
+		}
+		dir := filepath.Join(root, name)
+		if !within(root, dir) {
+			http.Error(w, "not a batch folder name", http.StatusBadRequest)
+			return
+		}
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			http.Error(w, "no such batch", http.StatusNotFound)
+			return
+		}
+		log.Printf("opening %s", name)
+		openFolder(dir)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// The internet route, when asked for. It listens only on loopback: the
 	// tunnel is the sole way in, so public traffic always meets the access
 	// gate while people on the LAN carry on using the plain address.
@@ -444,7 +467,16 @@ func randomToken() string {
 // code, so a client never types it: the first request carries ?k=, which is
 // swapped for a cookie and redirected away so the address bar stays clean.
 func publicGate(token string, next http.Handler) http.Handler {
+	// Everything else - the operator's screen, the batch listing, and above all
+	// /open, which puts windows on this desktop - stays off the internet route.
+	allowed := map[string]bool{"/": true, "/upload": true}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowed[r.URL.Path] {
+			http.NotFound(w, r)
+			return
+		}
+
 		fromQuery := r.URL.Query().Get("k") == token
 		cookie, _ := r.Cookie("filedrop")
 		fromCookie := cookie != nil && cookie.Value == token
