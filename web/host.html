@@ -99,6 +99,20 @@
   .cog:hover, .cog:focus-visible { color: var(--accent); outline: none; transform: rotate(60deg); }
   .cog svg { width: 21px; height: 21px; fill: currentColor; display: block; }
 
+  /* The update badge takes the opposite corner from the cog, and does not spin:
+     the rotation reads as "settings", not as "something is waiting for you". */
+  .badge-btn { left: 18px; right: auto; color: #fff; background: var(--accent); border-color: var(--accent); }
+  .badge-btn:hover, .badge-btn:focus-visible { color: #fff; transform: translateY(-2px); }
+  .upd-line { margin: 18px 0 6px; font-size: 15px; }
+  /* The browser's own link colour is close to unreadable on the dark sheet. */
+  .sheet-body a { color: var(--accent); }
+  .upd-notes {
+    margin: 12px 0 4px; padding: 12px 14px; max-height: 220px; overflow: auto;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word; color: var(--muted);
+  }
+
   dialog {
     padding: 0; border: 0; background: transparent; color: var(--ink);
     width: min(560px, calc(100% - 28px));
@@ -190,6 +204,41 @@
 </head>
 <body>
 
+<button class="cog badge-btn" id="update-btn" type="button" hidden
+        title="An update is available" aria-label="An update is available">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 3a1 1 0 0 1 .7.3l5 5a1 1 0 0 1-1.4 1.4L13 6.4V15a1 1 0 0 1-2 0V6.4L7.7 9.7a1 1 0 0 1-1.4-1.4l5-5A1 1 0 0 1 12 3ZM5 18a1 1 0 0 1 1-1h12a1 1 0 0 1 0 2H6a1 1 0 0 1-1-1Z"/>
+  </svg>
+</button>
+
+<dialog id="update" aria-labelledby="update-title">
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3 id="update-title">Update available</h3>
+      <button class="x" type="button" data-update-close aria-label="Close">&#10005;</button>
+    </div>
+    <div class="sheet-body">
+      <p class="upd-line">
+        This is <strong id="upd-current">…</strong>. The newest release is
+        <strong id="upd-latest">…</strong>.
+      </p>
+      <p class="note"><a id="upd-link" href="#" target="_blank" rel="noopener">Release notes on GitHub</a></p>
+      <pre class="upd-notes" id="upd-notes"></pre>
+      <p class="note">
+        The download is checked against the SHA-256 published with the release
+        before anything is replaced. The program restarts to finish.
+      </p>
+    </div>
+    <p class="msg" id="upd-msg" hidden></p>
+    <div class="sheet-foot">
+      <span class="spacer"></span>
+      <button type="button" data-update-close>Not now</button>
+      <button type="button" class="primary" id="upd-go">Download and install</button>
+      <button type="button" class="danger" id="upd-restart" hidden>Restart to finish</button>
+    </div>
+  </div>
+</dialog>
+
 <button class="cog" id="cog" type="button" title="Settings" aria-label="Settings">
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-1.7-1l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5c-.6.2-1.2.6-1.7 1l-2.4-1a.5.5 0 0 0-.6.2L2.5 8.8a.5.5 0 0 0 .1.6L4.6 11a7.6 7.6 0 0 0 0 2l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3c.1.2.4.3.6.2l2.4-1c.5.4 1.1.8 1.7 1l.4 2.5c0 .2.2.4.5.4h3.8c.3 0 .5-.2.5-.4l.4-2.5c.6-.2 1.2-.6 1.7-1l2.4 1c.2.1.5 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/>
@@ -248,6 +297,11 @@
         <label class="check">
           <input name="open_host" type="checkbox">
           <span>Open this page in a browser when the program starts</span>
+        </label>
+
+        <label class="check">
+          <input name="check_updates" type="checkbox">
+          <span>Check GitHub for a newer release when the program starts</span>
         </label>
       </fieldset>
 
@@ -478,6 +532,74 @@ function restartServer(say, onFail) {
   });
 }
 
+// Updates. The check itself already ran on the server at start-up, so this only
+// asks what it found; the badge stays hidden unless there is something to say.
+(function () {
+  var btn = document.getElementById('update-btn');
+  var dlg = document.getElementById('update');
+  var msg = document.getElementById('upd-msg');
+  var go = document.getElementById('upd-go');
+  var restart = document.getElementById('upd-restart');
+
+  function say(text, kind) {
+    msg.textContent = text || '';
+    msg.className = 'msg' + (kind ? ' ' + kind : '');
+    msg.hidden = !text;
+  }
+
+  function show(s) {
+    document.getElementById('upd-current').textContent = s.current;
+    document.getElementById('upd-latest').textContent = s.latest || '—';
+    document.getElementById('upd-notes').textContent = s.notes || '';
+    var link = document.getElementById('upd-link');
+    link.href = s.url || '#';
+    // Already downloaded and checked on an earlier click: all that is left is
+    // to run it.
+    if (s.ready) {
+      go.hidden = true;
+      restart.hidden = false;
+      say('Downloaded and checked. Restart to run it.', 'good');
+    }
+  }
+
+  fetch('/update').then(function (r) { return r.json(); }).then(function (s) {
+    if (!s.available && !s.ready) return;       // nothing worth a badge
+    btn.hidden = false;
+    show(s);
+  }).catch(function () { /* offline, or the check has not finished */ });
+
+  btn.onclick = function () {
+    say('');
+    fetch('/update').then(function (r) { return r.json(); }).then(show).catch(function () {});
+    dlg.showModal();
+  };
+
+  Array.prototype.forEach.call(dlg.querySelectorAll('[data-update-close]'), function (el) {
+    el.onclick = function () { dlg.close(); };
+  });
+
+  go.onclick = function () {
+    go.disabled = true;
+    say('Downloading and checking… this can take a minute.');
+    fetch('/update', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (s) {
+      go.disabled = false;
+      if (s.error) { say(s.error, 'bad'); return; }
+      show(s);
+    }).catch(function () {
+      go.disabled = false;
+      say('Could not reach the server.', 'bad');
+    });
+  };
+
+  restart.onclick = function () {
+    restart.disabled = true;
+    restartServer(
+      function (t) { say(t, 'good'); },
+      function (e) { restart.disabled = false; say(e, 'bad'); }
+    );
+  };
+})();
+
 // The "Send over Internet" tile when cloudflared is missing. Installing it
 // cannot help the running server - the tunnel is only ever started at boot - so
 // a successful install turns into an offer to restart.
@@ -548,6 +670,7 @@ function restartServer(say, onFail) {
     field('recent').value = s.recent;
     field('open').checked = !!s.open;
     field('open_host').checked = !!s.open_host;
+    field('check_updates').checked = !!s.check_updates;
     field('port').value = s.port;
     field('host').value = s.host || '';
     var route = s.lan_only ? 'lan' : (s.internet_only ? 'internet' : 'both');
@@ -566,6 +689,7 @@ function restartServer(say, onFail) {
       recent: Number(field('recent').value || 0),
       open: field('open').checked,
       open_host: field('open_host').checked,
+      check_updates: field('check_updates').checked,
       port: Number(field('port').value || 0),
       host: field('host').value,
       lan_only: routeChoice() === 'lan',

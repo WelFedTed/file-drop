@@ -45,13 +45,15 @@ var hostHTMLSrc string
 // Settings.applyFlags: the file supplies the values, a flag typed on the
 // command line overrides its own for that run only.
 var (
-	flagPort     = flag.Int("port", defaultPort, "TCP port to listen on")
-	flagDir      = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
-	flagHost     = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
-	flagMaxMB    = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
-	flagRecent   = flag.Int("recent", defaultRecent, "how many of the newest drop folders /host lists")
-	flagOpen     = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
-	flagOpenHost = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
+	flagPort         = flag.Int("port", defaultPort, "TCP port to listen on")
+	flagDir          = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
+	flagHost         = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
+	flagMaxMB        = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
+	flagRecent       = flag.Int("recent", defaultRecent, "how many of the newest drop folders /host lists")
+	flagOpen         = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
+	flagOpenHost     = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
+	flagCheckUpdates = flag.Bool("check-updates", defaultChecks, "ask GitHub for a newer release at start-up")
+	flagVersion      = flag.Bool("version", false, "print the version and exit")
 
 	flagLanOnly      = flag.Bool("lan-only", false, "stay on the local network: do not publish an internet link")
 	flagInternetOnly = flag.Bool("internet-only", false, "serve the internet route only: refuse uploads from the local network")
@@ -79,10 +81,25 @@ func main() {
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 
+	if *flagVersion {
+		fmt.Println(version)
+		return
+	}
+
+	// The copy an update left behind, which could not be removed at the time
+	// because it was the program doing the removing.
+	tidyPreviousUpdate()
+
 	if err := loadSettings(); err != nil {
 		log.Fatalf("%v", err)
 	}
 	cfg := currentSettings()
+
+	// Nothing waits on this: an unreachable GitHub must not delay or stop a
+	// server whose whole job is on the local network.
+	if cfg.CheckUpdates {
+		go checkForUpdate()
+	}
 
 	root := cfg.Dir
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -241,6 +258,34 @@ func main() {
 			}
 			log.Printf("firewall rule added")
 			writeJSON(w, http.StatusOK, firewallStatus(port))
+
+		default:
+			http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// The update badge in the corner of /host, and the button behind it. Both
+	// are local-only: this replaces the program on disk.
+	mux.HandleFunc("/update", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, currentUpdateState())
+
+		case http.MethodPost:
+			log.Printf("downloading the update")
+			if err := downloadUpdate(); err != nil {
+				log.Printf("update not applied: %v", err)
+				state := currentUpdateState()
+				state.Error = err.Error()
+				setUpdateState(state)
+				writeJSON(w, http.StatusOK, state)
+				return
+			}
+			state := currentUpdateState()
+			state.Ready = true
+			state.Error = ""
+			setUpdateState(state)
+			writeJSON(w, http.StatusOK, state)
 
 		default:
 			http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)

@@ -30,6 +30,7 @@ type Settings struct {
 	Recent       int    `json:"recent"`
 	Open         bool   `json:"open"`
 	OpenHost     bool   `json:"open_host"`
+	CheckUpdates bool   `json:"check_updates"`
 	LanOnly      bool   `json:"lan_only"`
 	InternetOnly bool   `json:"internet_only"`
 	Public       string `json:"public"`
@@ -46,6 +47,7 @@ const (
 	defaultRecent   = 10
 	defaultOpen     = true
 	defaultOpenHost = true
+	defaultChecks   = true
 
 	settingsFile = "file-drop-server.toml"
 	qrCodeFile   = "qr-code.png"
@@ -53,12 +55,13 @@ const (
 
 func defaultSettings() Settings {
 	return Settings{
-		Port:     defaultPort,
-		Dir:      defaultDir,
-		MaxMB:    defaultMaxMB,
-		Recent:   defaultRecent,
-		Open:     defaultOpen,
-		OpenHost: defaultOpenHost,
+		Port:         defaultPort,
+		Dir:          defaultDir,
+		MaxMB:        defaultMaxMB,
+		Recent:       defaultRecent,
+		Open:         defaultOpen,
+		OpenHost:     defaultOpenHost,
+		CheckUpdates: defaultChecks,
 	}
 }
 
@@ -163,6 +166,8 @@ func (s *Settings) applyFlags() {
 			s.Open = *flagOpen
 		case "open-host":
 			s.OpenHost = *flagOpenHost
+		case "check-updates":
+			s.CheckUpdates = *flagCheckUpdates
 		case "lan-only":
 			s.LanOnly = *flagLanOnly
 		case "internet-only":
@@ -301,6 +306,8 @@ func (s Settings) toTOML() []byte {
 		"open", strconv.FormatBool(s.Open))
 	entry("Open the QR code page in a browser when the program starts.",
 		"open_host", strconv.FormatBool(s.OpenHost))
+	entry("Ask GitHub whether a newer release exists, once at start-up.",
+		"check_updates", strconv.FormatBool(s.CheckUpdates))
 	entry("Stay on the local network: publish no internet link at all.",
 		"lan_only", strconv.FormatBool(s.LanOnly))
 	entry("The other way round: serve the internet route only, and refuse\n# uploads from this local network. The two cannot both be true.",
@@ -336,6 +343,8 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignBool(&s.Open, key, value)
 		case "open_host":
 			err = assignBool(&s.OpenHost, key, value)
+		case "check_updates":
+			err = assignBool(&s.CheckUpdates, key, value)
 		case "lan_only":
 			err = assignBool(&s.LanOnly, key, value)
 		case "wifi_only":

@@ -21,13 +21,13 @@ created from the current date and time.
 ## Build
 
 ```bash
-go build -o builds/file-drop-server.exe .
+go build -o builds/file-drop.exe .
 ```
 
 ## Run
 
 ```bash
-.\builds\file-drop-server.exe
+.\builds\file-drop.exe
 ```
 
 It prints a scannable QR code straight into the terminal, along with:
@@ -97,6 +97,8 @@ falls back to the default.
 | `-recent` | `recent` | `10` | How many of the newest drops `/host` lists (1-500) |
 | `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
 | `-open-host` | `open_host` | `true` | Open `/host` in a browser at start-up (`-open-host=false` to stop) |
+| `-check-updates` | `check_updates` | `true` | Ask GitHub for a newer release at start-up |
+| `-version` | — | — | Print the version and exit |
 | `-lan-only` | `lan_only` | `false` | Stay on the LAN; publish no internet link at all |
 | `-internet-only` | `internet_only` | `false` | Serve the internet route only; refuse LAN uploads |
 | `-public` | `public` | — | Advertise this HTTPS address instead of starting a tunnel |
@@ -105,13 +107,55 @@ falls back to the default.
 | `-config` | — | beside the program | Settings file to read and save |
 
 ```bash
-.\builds\file-drop-server.exe -port 9000 -dir D:\client-uploads -max 20480
+.\builds\file-drop.exe -port 9000 -dir D:\client-uploads -max 20480
 ```
 
 A settings file that cannot be understood stops the server with the offending
 line, rather than being ignored — being quietly served on the wrong port is
 worse than not starting. Keys it does not recognise are skipped, so a file
 written by a later version still starts an earlier one.
+
+## Updating
+
+At start-up the server asks GitHub once whether a newer release exists. If there
+is one, an **update badge appears in the top left of `/host`**, opposite the
+settings cog; if there is not, nothing appears and nothing is said. Clicking it
+shows what you are running, what is available, and the release notes.
+
+**Download and install** fetches the new executable and checks its SHA-256
+against the `checksums.txt` published with the release **before anything on disk
+is touched**. A download that does not match is thrown away, and a release with
+no `checksums.txt` is refused outright rather than trusted — a build that cannot
+be checked is not one to replace a working program with.
+
+The new build takes the same file name as the old one, so shortcuts, firewall
+rules and the settings file beside it all still point at the right thing.
+Windows will not let a running executable be overwritten, but it will let it be
+renamed, so the old one is moved to `file-drop.exe.old` and deleted at the next
+start. Restart to finish; the page offers the button and reloads itself.
+
+Turn the whole thing off with `-check-updates=false`, or from the settings
+panel, if you would rather it did not talk to GitHub at all.
+
+### Releasing
+
+Each release publishes exactly two assets: `file-drop.exe` and a `checksums.txt`
+listing its SHA-256. The name never carries the version — the updater and any
+shortcut both depend on it staying put.
+
+```bash
+# 1. set `const version` in version.go, then
+go run ./tools/mksyso                       # regenerate the Windows version resource
+go build -trimpath -ldflags "-s -w" -o builds/file-drop.exe .
+sha256sum builds/file-drop.exe              # into checksums.txt as "<sum>  file-drop.exe"
+```
+
+`tools/mksyso` writes `rsrc_windows_amd64.syso`, which is what gives the built
+executable its **File version** in Explorer's Details tab. Go cannot express a
+Windows version resource, and the usual answer is a third-party generator; this
+one is a hundred lines in the tree, reads the same version constant as the rest
+of the program, and keeps the project on its single dependency. The generated
+file is committed, so an ordinary `go build` picks it up.
 
 ## Keeping the QR code permanent
 
@@ -124,7 +168,7 @@ forever as long as that address does not change. Two things to do once:
    prefer, bake it in yourself:
 
    ```bash
-   .\builds\file-drop-server.exe -host 192.168.1.50
+   .\builds\file-drop.exe -host 192.168.1.50
    ```
 
 2. **Let it through the firewall.** The first run usually pops up a Windows
@@ -157,14 +201,14 @@ through a Cloudflare quick tunnel, so a client who is nowhere near your Wi-Fi
 can still send you files. To stay purely local:
 
 ```bash
-.\builds\file-drop-server.exe -lan-only
+.\builds\file-drop.exe -lan-only
 ```
 
 Or the other way round, to take the machine off its own network and serve only
 the tunnel:
 
 ```bash
-.\builds\file-drop-server.exe -internet-only
+.\builds\file-drop.exe -internet-only
 ```
 
 That binds the upload page to loopback, so nothing on the local network reaches
