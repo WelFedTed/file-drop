@@ -306,7 +306,28 @@ func main() {
 	// the access gate while people on the LAN carry on using the plain address.
 	var tunnel *exec.Cmd
 
-	if !cfg.WifiOnly {
+	// Why there is no internet link, when there is none to be had. Knowing this
+	// before the banner prints is the difference between saying the link is on
+	// its way and admitting it is not coming.
+	noInternet := ""
+
+	// Look for cloudflared up front rather than inside the goroutine that
+	// starts it. It is an instant, harmless check, and doing it here means a
+	// missing client is known in time for both the banner and /host, instead of
+	// being discovered a moment after both have promised a second QR code.
+	// Skipped when the operator runs their own tunnel: that needs no client.
+	tunnelBin := ""
+	if !cfg.WifiOnly && cfg.Public == "" {
+		bin, err := cloudflaredPath()
+		if err != nil {
+			noInternet = "cloudflared is not installed"
+			log.Printf("no internet link: %v", err)
+			log.Printf("local uploads are unaffected; use -wifi-only to stop trying")
+		}
+		tunnelBin = bin
+	}
+
+	if !cfg.WifiOnly && noInternet == "" {
 		token := cfg.Token
 		if token == "" {
 			token = randomToken()
@@ -324,6 +345,7 @@ func main() {
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", publicPort))
 		if err != nil {
 			// Not fatal: the local network is the main event and must still work.
+			noInternet = fmt.Sprintf("port %d is not free", publicPort)
 			log.Printf("no internet link - port %d is not free (%v). Local uploads are unaffected.", publicPort, err)
 		} else {
 			go func() {
@@ -351,7 +373,7 @@ func main() {
 				// the second QR code appears on /host when it is ready.
 				tunnelPending = true
 				go func() {
-					base, cmd, err := startTunnel(publicPort)
+					base, cmd, err := startTunnel(tunnelBin, publicPort)
 					if err != nil {
 						log.Printf("no internet link: %v", err)
 						log.Printf("local uploads are unaffected; use -wifi-only to stop trying")
@@ -392,6 +414,8 @@ func main() {
 	switch {
 	case cfg.WifiOnly:
 		fmt.Printf("  From anywhere:                 off (Wi-Fi only)\n")
+	case noInternet != "":
+		fmt.Printf("  From anywhere:                 off (%s)\n", noInternet)
 	case tunnelPending:
 		fmt.Printf("  From anywhere:                 starting, appears on /host shortly\n")
 	default:
@@ -412,7 +436,7 @@ func main() {
 	} else {
 		fmt.Printf("  Settings file:                 %s (defaults - not written yet)\n", configPath)
 	}
-	if !cfg.WifiOnly {
+	if !cfg.WifiOnly && noInternet == "" {
 		fmt.Printf("\n  The internet address changes every restart, and Cloudflare caps\n")
 		fmt.Printf("  uploads at %s over that route. The local one is unlimited.\n", humanSize(cloudflareBodyLimit))
 	}
@@ -697,14 +721,20 @@ func publicGate(token string, next http.Handler) http.Handler {
 
 var tunnelURLPattern = regexp.MustCompile(`https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com`)
 
-// startTunnel runs cloudflared against the internet listener and waits for it
-// to report the public address it was given.
-func startTunnel(port int) (string, *exec.Cmd, error) {
+// cloudflaredPath finds the tunnel client. It is looked up before anything is
+// promised about an internet link, so that a machine without it says so at
+// once rather than after a placeholder has already gone up on /host.
+func cloudflaredPath() (string, error) {
 	bin, err := exec.LookPath("cloudflared")
 	if err != nil {
-		return "", nil, errors.New("cloudflared is not installed - run: winget install Cloudflare.cloudflared")
+		return "", errors.New("cloudflared is not installed - run: winget install Cloudflare.cloudflared")
 	}
+	return bin, nil
+}
 
+// startTunnel runs cloudflared against the internet listener and waits for it
+// to report the public address it was given.
+func startTunnel(bin string, port int) (string, *exec.Cmd, error) {
 	cmd := exec.Command(bin, "tunnel", "--no-autoupdate", "--url",
 		fmt.Sprintf("http://127.0.0.1:%d", port))
 	stdout, err := cmd.StdoutPipe()

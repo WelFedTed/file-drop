@@ -155,8 +155,14 @@ can still send you files. To stay purely local:
 
 The tunnel comes up in the background — the local page and uploads work
 immediately, within about a second, and the second QR code appears on `/host`
-on its own a few seconds later. If cloudflared is missing or the tunnel cannot
-be established, the server says so once and carries on serving the LAN.
+on its own a few seconds later.
+
+If cloudflared is not installed, the server says so at start-up rather than
+part-way through: the banner reads `off (cloudflared is not installed)`, `/host`
+shows the one LAN code with no placeholder beside it, and no port is taken for a
+tunnel that cannot start. Everything on the local network is unaffected. If the
+client is there but the tunnel fails to come up, the second code stays a
+placeholder for a minute and a half and then removes itself.
 
 `/host` shows **two** QR codes — "Send over Local Area Network" and "Send over
 Internet". Clients in the room scan the first and get full LAN speed with no
