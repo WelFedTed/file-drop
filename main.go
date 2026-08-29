@@ -45,15 +45,17 @@ var hostHTMLSrc string
 // Settings.applyFlags: the file supplies the values, a flag typed on the
 // command line overrides its own for that run only.
 var (
-	flagPort         = flag.Int("port", defaultPort, "TCP port to listen on")
-	flagDir          = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
-	flagHost         = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
-	flagMaxMB        = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
-	flagRecent       = flag.Int("recent", defaultRecent, "how many of the newest drop folders /host lists")
-	flagOpen         = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
-	flagOpenHost     = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
-	flagCheckUpdates = flag.Bool("check-updates", defaultChecks, "ask GitHub for a newer release at start-up")
-	flagVersion      = flag.Bool("version", false, "print the version and exit")
+	flagPort           = flag.Int("port", defaultPort, "TCP port to listen on")
+	flagDir            = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
+	flagHost           = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
+	flagMaxMB          = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
+	flagRecent         = flag.Int("recent", defaultRecent, "how many of the newest drop folders /host lists")
+	flagAutoDelete     = flag.Bool("auto-delete", false, "delete drop folders once they are older than -auto-delete-days")
+	flagAutoDeleteDays = flag.Int("auto-delete-days", defaultDeleteDays, "how old a drop folder has to be before -auto-delete removes it")
+	flagOpen           = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
+	flagOpenHost       = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
+	flagCheckUpdates   = flag.Bool("check-updates", defaultChecks, "ask GitHub for a newer release at start-up")
+	flagVersion        = flag.Bool("version", false, "print the version and exit")
 
 	flagLanOnly      = flag.Bool("lan-only", false, "stay on the local network: do not publish an internet link")
 	flagInternetOnly = flag.Bool("internet-only", false, "serve the internet route only: refuse uploads from the local network")
@@ -100,6 +102,10 @@ func main() {
 	if cfg.CheckUpdates {
 		go checkForUpdate()
 	}
+
+	// Clears expired drop folders, if that has been asked for. Reads the
+	// settings on each pass, so it can be switched on and off without a restart.
+	startBatchSweeper()
 
 	root := cfg.Dir
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -270,6 +276,33 @@ func main() {
 		default:
 			http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// Removing one drop folder, from the trash icon on its row. Local-only, and
+	// only ever a folder this program created: see batchFolderName.
+	mux.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		name := r.URL.Query().Get("folder")
+		if err := deleteBatch(currentSettings().Dir, name); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	// Asking again on demand, for the button in the settings panel. The check at
+	// start-up is a snapshot; this is how someone leaving the server running for
+	// a fortnight finds out about a release without restarting it.
+	mux.HandleFunc("/update/check", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		checkForUpdate()
+		writeJSON(w, http.StatusOK, currentUpdateState())
 	})
 
 	// The update badge in the corner of /host, and the button behind it. Both
@@ -1178,7 +1211,13 @@ func recentBatches(root string, limit int) []batch {
 	}
 	var names []string
 	for _, e := range entries {
-		if e.IsDir() {
+		// Only folders this program created. The drop root is somewhere the
+		// operator chose and may hold other things, which have no business in a
+		// list of drops - and each row now offers to delete what it names, so
+		// listing something that cannot be deleted would be offering a button
+		// that only ever fails. It also keeps the sort honest: newest-first is
+		// a reverse sort of timestamps, which means nothing for other names.
+		if e.IsDir() && batchPattern.MatchString(e.Name()) {
 			names = append(names, e.Name())
 		}
 	}

@@ -23,31 +23,34 @@ import (
 // to start over - the defaults below are used, and nothing is written until the
 // operator saves from the settings panel.
 type Settings struct {
-	Port         int    `json:"port"`
-	Dir          string `json:"dir"`
-	Host         string `json:"host"`
-	MaxMB        int64  `json:"max_mb"`
-	Recent       int    `json:"recent"`
-	Open         bool   `json:"open"`
-	OpenHost     bool   `json:"open_host"`
-	CheckUpdates bool   `json:"check_updates"`
-	LanOnly      bool   `json:"lan_only"`
-	InternetOnly bool   `json:"internet_only"`
-	Public       string `json:"public"`
-	PublicPort   int    `json:"public_port"`
-	Token        string `json:"token"`
+	Port           int    `json:"port"`
+	Dir            string `json:"dir"`
+	Host           string `json:"host"`
+	MaxMB          int64  `json:"max_mb"`
+	Recent         int    `json:"recent"`
+	AutoDelete     bool   `json:"auto_delete"`
+	AutoDeleteDays int    `json:"auto_delete_days"`
+	Open           bool   `json:"open"`
+	OpenHost       bool   `json:"open_host"`
+	CheckUpdates   bool   `json:"check_updates"`
+	LanOnly        bool   `json:"lan_only"`
+	InternetOnly   bool   `json:"internet_only"`
+	Public         string `json:"public"`
+	PublicPort     int    `json:"public_port"`
+	Token          string `json:"token"`
 }
 
 // The defaults, shared with the flag declarations so there is one source of
 // truth for what "unconfigured" means.
 const (
-	defaultPort     = 8080
-	defaultDir      = `C:\file-drop-server`
-	defaultMaxMB    = 0
-	defaultRecent   = 10
-	defaultOpen     = true
-	defaultOpenHost = true
-	defaultChecks   = true
+	defaultPort       = 8080
+	defaultDir        = `C:\file-drop`
+	defaultMaxMB      = 0
+	defaultRecent     = 10
+	defaultDeleteDays = 30
+	defaultOpen       = true
+	defaultOpenHost   = true
+	defaultChecks     = true
 
 	settingsFile = "file-drop.toml"
 	// What the settings file was called when the program was file-drop-server.
@@ -59,13 +62,15 @@ const (
 
 func defaultSettings() Settings {
 	return Settings{
-		Port:         defaultPort,
-		Dir:          defaultDir,
-		MaxMB:        defaultMaxMB,
-		Recent:       defaultRecent,
-		Open:         defaultOpen,
-		OpenHost:     defaultOpenHost,
-		CheckUpdates: defaultChecks,
+		Port:   defaultPort,
+		Dir:    defaultDir,
+		MaxMB:  defaultMaxMB,
+		Recent: defaultRecent,
+		// AutoDelete stays false: nothing here removes an upload unless asked.
+		AutoDeleteDays: defaultDeleteDays,
+		Open:           defaultOpen,
+		OpenHost:       defaultOpenHost,
+		CheckUpdates:   defaultChecks,
 	}
 }
 
@@ -183,6 +188,10 @@ func (s *Settings) applyFlags() {
 			s.MaxMB = *flagMaxMB
 		case "recent":
 			s.Recent = *flagRecent
+		case "auto-delete":
+			s.AutoDelete = *flagAutoDelete
+		case "auto-delete-days":
+			s.AutoDeleteDays = *flagAutoDeleteDays
 		case "open":
 			s.Open = *flagOpen
 		case "open-host":
@@ -236,6 +245,11 @@ func (s *Settings) normalise() error {
 	// The page asks for this list every three seconds and each entry means
 	// walking a batch folder, so the ceiling is there to stop a stray number
 	// making the operator's own screen the slowest thing on the machine.
+	// Only checked when the sweeper is on, so a stored number nobody uses
+	// cannot stop the server starting.
+	if s.AutoDelete && (s.AutoDeleteDays < 1 || s.AutoDeleteDays > 3650) {
+		return fmt.Errorf("deleting drops after %d days is outside 1-3650", s.AutoDeleteDays)
+	}
 	if s.Recent < 1 || s.Recent > 500 {
 		return fmt.Errorf("recent drops has to be between 1 and 500, not %d", s.Recent)
 	}
@@ -323,6 +337,10 @@ func (s Settings) toTOML() []byte {
 		"max_mb", strconv.FormatInt(s.MaxMB, 10))
 	entry("How many of the newest drop folders /host lists.",
 		"recent", strconv.Itoa(s.Recent))
+	entry("Delete drop folders once they are older than auto_delete_days.\n# Off by default: nothing here removes an upload unless asked to.",
+		"auto_delete", strconv.FormatBool(s.AutoDelete))
+	entry("How old a drop folder has to be before auto_delete removes it.",
+		"auto_delete_days", strconv.Itoa(s.AutoDeleteDays))
 	entry("Open each finished batch in Windows Explorer.",
 		"open", strconv.FormatBool(s.Open))
 	entry("Open the QR code page in a browser when the program starts.",
@@ -360,6 +378,10 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignInt64(&s.MaxMB, key, value)
 		case "recent":
 			err = assignInt(&s.Recent, key, value)
+		case "auto_delete":
+			err = assignBool(&s.AutoDelete, key, value)
+		case "auto_delete_days":
+			err = assignInt(&s.AutoDeleteDays, key, value)
 		case "open":
 			err = assignBool(&s.Open, key, value)
 		case "open_host":

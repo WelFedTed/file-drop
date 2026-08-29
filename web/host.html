@@ -87,6 +87,16 @@
   .openlink:hover, .openlink:focus-visible {
     color: var(--accent); text-decoration-color: currentColor; outline: none;
   }
+  td.bin, th:last-child { width: 1%; text-align: right; padding-left: 12px; }
+  .binbtn {
+    border: 0; background: transparent; padding: 4px; margin: -4px;
+    display: block; margin-left: auto;
+    color: var(--muted); cursor: pointer; border-radius: 8px;
+    transition: color .12s;
+  }
+  .binbtn svg { width: 17px; height: 17px; fill: currentColor; display: block; }
+  .binbtn:hover, .binbtn:focus-visible { color: #dc2626; outline: none; }
+  .binbtn:disabled { opacity: .4; cursor: default; }
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--muted); font-size: 15px; margin: 0; }
   .path { color: var(--muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
@@ -198,13 +208,16 @@
   .check { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-size: 15px; }
   .check input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
   .sheet-foot {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 16px 22px; border-top: 1px solid var(--line); background: var(--bg);
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 16px 18px; border-top: 1px solid var(--line); background: var(--bg);
   }
-  .sheet-foot .spacer { flex: 1 1 auto; }
+  /* Zero basis so the spacers give their room up to the buttons before any of
+     them is pushed onto a second line. */
+  .sheet-foot .spacer { flex: 1 1 0; min-width: 0; }
   .sheet-foot button {
-    font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
-    padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line);
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    white-space: nowrap;
+    padding: 8px 13px; border-radius: 10px; border: 1px solid var(--line);
     background: var(--card); color: var(--ink);
   }
   .sheet-foot button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -301,6 +314,20 @@
           <input name="recent" type="number" min="1" max="500" step="1" inputmode="numeric">
           <span class="hint">How many of the newest batches this page lists, from 1 to 500.</span>
         </label>
+
+        <label class="check">
+          <input name="auto_delete" type="checkbox">
+          <span>Delete old drop folders automatically</span>
+        </label>
+
+        <label class="field">
+          <span class="name">Delete drops older than</span>
+          <input name="auto_delete_days" type="number" min="1" max="3650" step="1" inputmode="numeric">
+          <span class="hint">
+            In days, and only while the box above is ticked. Folders go for good, so
+            this stays off unless you turn it on.
+          </span>
+        </label>
       </fieldset>
 
       <fieldset>
@@ -384,6 +411,7 @@
 
     <div class="sheet-foot">
       <button type="button" id="settings-reset">Restore defaults</button>
+      <button type="button" id="settings-check">Check for updates</button>
       <span class="spacer"></span>
       <button type="button" class="danger" id="settings-restart">Restart</button>
       <span class="spacer"></span>
@@ -488,7 +516,7 @@ function refresh() {
     }
     var table = document.createElement('table');
     var head = document.createElement('tr');
-    head.innerHTML = '<th>Folder</th><th class="num">Files</th><th class="num">Size</th>';
+    head.innerHTML = '<th>Folder</th><th class="num">Files</th><th class="num">Size</th><th></th>';
     table.appendChild(head);
 
     rows.forEach(function (b) {
@@ -512,9 +540,35 @@ function refresh() {
       sizeCell.className = 'num';
       sizeCell.textContent = fmt(b.bytes);
 
+      // Deleting a batch cannot be undone - the files are gone, not moved to
+      // the recycle bin - so it asks first, naming the folder it would remove.
+      var binCell = document.createElement('td');
+      binCell.className = 'bin';
+      var bin = document.createElement('button');
+      bin.type = 'button';
+      bin.className = 'binbtn';
+      bin.title = 'Delete this folder and everything in it';
+      bin.setAttribute('aria-label', 'Delete ' + b.folder);
+      bin.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<path d="M9 3h6a1 1 0 0 1 1 1v1h4a1 1 0 1 1 0 2h-1v12a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V7H4a1 1 0 0 1 0-2h4V4a1 1 0 0 1 1-1Zm-2 4v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7H7Zm3 3a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Zm4 0a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Z"/></svg>';
+      bin.onclick = function () {
+        if (!confirm('Delete ' + b.folder + ' and the ' + b.files +
+                     ' file(s) in it?\n\nThis cannot be undone.')) return;
+        bin.disabled = true;
+        fetch('/delete?folder=' + encodeURIComponent(b.folder), { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.error) { bin.disabled = false; alert(d.error); return; }
+            refresh();
+          })
+          .catch(function () { bin.disabled = false; });
+      };
+      binCell.appendChild(bin);
+
       tr.appendChild(folderCell);
       tr.appendChild(filesCell);
       tr.appendChild(sizeCell);
+      tr.appendChild(binCell);
       table.appendChild(tr);
     });
 
@@ -690,6 +744,8 @@ function restartServer(say, onFail) {
     field('dir').value = s.dir || '';
     field('max_mb').value = s.max_mb;
     field('recent').value = s.recent;
+    field('auto_delete').checked = !!s.auto_delete;
+    field('auto_delete_days').value = s.auto_delete_days;
     field('open').checked = !!s.open;
     field('open_host').checked = !!s.open_host;
     field('check_updates').checked = !!s.check_updates;
@@ -709,6 +765,8 @@ function restartServer(say, onFail) {
       dir: field('dir').value,
       max_mb: Number(field('max_mb').value || 0),
       recent: Number(field('recent').value || 0),
+      auto_delete: field('auto_delete').checked,
+      auto_delete_days: Number(field('auto_delete_days').value || 0),
       open: field('open').checked,
       open_host: field('open_host').checked,
       check_updates: field('check_updates').checked,
@@ -839,6 +897,29 @@ function restartServer(say, onFail) {
     if (!defaults) return;
     fill(defaults);
     say('Defaults filled in. Save to keep them.', 'good');
+  };
+
+  // The check at start-up is a snapshot, so this asks again. A server left
+  // running for a fortnight is exactly the one that will not have heard about a
+  // release, and restarting it just to find out would be a silly requirement.
+  document.getElementById('settings-check').onclick = function () {
+    var btn = document.getElementById('settings-check');
+    btn.disabled = true;
+    say('Asking GitHub…');
+    fetch('/update/check', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (s) {
+      btn.disabled = false;
+      if (s.error) { say(s.error, 'bad'); return; }
+      if (s.available) {
+        say('Version ' + s.latest + ' is available — close this and use the button in the top left corner.', 'good');
+        var badge = document.getElementById('update-btn');
+        if (badge) badge.hidden = false;
+        return;
+      }
+      say('Up to date: ' + s.current + ' is the newest release.', 'good');
+    }).catch(function () {
+      btn.disabled = false;
+      say('Could not reach the server.', 'bad');
+    });
   };
 
   // Restarting is what makes the "restart to apply" settings actually apply,

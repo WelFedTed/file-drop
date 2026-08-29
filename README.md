@@ -5,7 +5,7 @@ scans it, picks files or photos on their phone, and the files land on this
 machine in a timestamped folder.
 
 ```
-C:\file-drop-server\2026-08-29_16-54-33\
+C:\file-drop\2026-08-29_16-54-33\
     IMG_4471.jpg
     IMG_4472.jpg
     contract.pdf
@@ -36,7 +36,7 @@ It prints a scannable QR code straight into the terminal, along with:
 |---|---|
 | Upload page for clients | `http://<your-lan-ip>:8080/` |
 | Big QR code to show on screen | `http://localhost:8080/host` |
-| Printable QR image | `C:\file-drop-server\qr-code.png` |
+| Printable QR image | `C:\file-drop\qr-code.png` |
 | Settings file | `file-drop.toml`, beside the program |
 
 `/host` opens in your browser on its own as the server starts, so the codes are
@@ -96,10 +96,12 @@ falls back to the default.
 | Flag | TOML key | Default | What it does |
 |---|---|---|---|
 | `-port` | `port` | `8080` | Port to listen on |
-| `-dir` | `dir` | `C:\file-drop-server` | Where batches are saved |
+| `-dir` | `dir` | `C:\file-drop` | Where batches are saved |
 | `-host` | `host` | auto | Address baked into the QR code |
 | `-max` | `max_mb` | `0` | Largest single batch, in MB (`0` = no limit) |
 | `-recent` | `recent` | `10` | How many of the newest drops `/host` lists (1-500) |
+| `-auto-delete` | `auto_delete` | `false` | Delete drop folders older than the age below |
+| `-auto-delete-days` | `auto_delete_days` | `30` | How old a drop folder must be before that removes it (1-3650) |
 | `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
 | `-open-host` | `open_host` | `true` | Open `/host` in a browser at start-up (`-open-host=false` to stop) |
 | `-check-updates` | `check_updates` | `true` | Ask GitHub for a newer release at start-up |
@@ -138,6 +140,10 @@ rules and the settings file beside it all still point at the right thing.
 Windows will not let a running executable be overwritten, but it will let it be
 renamed, so the old one is moved to `file-drop.exe.old` and deleted at the next
 start. Restart to finish; the page offers the button and reloads itself.
+
+The check at start-up is a snapshot, so the settings panel has a **Check for
+updates** button that asks again — a server left running for a fortnight is
+exactly the one that will not have heard about a release.
 
 Turn the whole thing off with `-check-updates=false`, or from the settings
 panel, if you would rather it did not talk to GitHub at all.
@@ -288,7 +294,7 @@ stable public address, run your own tunnel and point the server at it with
 **Choose a folder** uploads a whole tree and rebuilds it inside the batch:
 
 ```
-C:\file-drop-server\2026-08-29_16-54-33\
+C:\file-drop\2026-08-29_16-54-33\
     client job\
         brief.pdf
         photos\IMG_01.jpg
@@ -357,6 +363,22 @@ and nothing pops up.
 On `/host`, every folder in **Recent drops** is clickable and opens that batch in
 Explorer. A browser will not follow a `file://` link from an `http://` page, so
 the click goes back to the server, which opens the window itself.
+
+Each row also has a **trash icon** that deletes that folder and everything in
+it. It asks first, naming the folder and how many files are in it, because the
+files are removed rather than sent to the recycle bin.
+
+**Deleting old drops on a schedule** is off by default. Turn it on in the
+settings panel, or with `-auto-delete`, and set how many days a folder may
+survive with `-auto-delete-days`. The sweep runs at start-up and hourly, and
+reads the settings each time, so switching it on or off takes effect without a
+restart.
+
+Both only ever remove folders this program created — the timestamped ones. The
+drop root is somewhere you chose and may hold other things; anything not matching
+that naming is left alone, `qr-code.png` included. For the same reason those
+other folders no longer appear in **Recent drops**: a row offering to delete
+something it cannot delete would be a button that only ever fails.
 
 The ten newest batches are listed. Older ones are still on disk — the list is
 just the tail of it. Change how many with `-recent`, or from the settings panel.
