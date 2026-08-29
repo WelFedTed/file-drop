@@ -52,6 +52,13 @@
   }
   .url.small { font-size: 14px; }
   .note { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+  .tilebtn {
+    margin: 12px 4px 0; font: inherit; font-size: 14px; font-weight: 600;
+    padding: 8px 14px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  .tilebtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tilebtn:disabled { opacity: .55; cursor: default; }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
@@ -284,6 +291,7 @@
 
     <div class="sheet-foot">
       <button type="button" id="settings-reset">Restore defaults</button>
+      <button type="button" id="settings-restart">Restart</button>
       <span class="spacer"></span>
       <button type="button" data-close>Cancel</button>
       <button type="submit" class="primary" id="settings-save">Save</button>
@@ -297,7 +305,7 @@
     <h1>Scan to send me files</h1>
     <p class="sub">Point your phone camera at a code, then pick your photos or documents.</p>
 
-    <div class="codes{{if .InternetURL}} two{{end}}">
+    <div class="codes{{if or .InternetURL .Pending .NoCloudflared}} two{{end}}">
       <div class="code">
         <img class="qr" src="/qr.png" alt="QR code for the local network upload page">
         <p class="label">Send over Local Area Network</p>
@@ -317,6 +325,19 @@
         <div class="qr placeholder"><span>Connecting…</span></div>
         <p class="label">Send over Internet</p>
         <p class="note">Setting up the internet link. This takes a moment.</p>
+      </div>
+      {{else if .NoCloudflared}}
+      <div class="code pending" id="nocf">
+        <div class="qr placeholder"><span>Not set up</span></div>
+        <p class="label">Send over Internet</p>
+        <p class="note" id="cf-note">
+          This needs <strong>cloudflared</strong>, which is not installed. Until it is,
+          only the local code above works — sending from anywhere else is unavailable.
+        </p>
+        {{if .CanInstall}}
+        <button type="button" class="tilebtn" id="cf-install">Install cloudflared</button>
+        <button type="button" class="tilebtn primary" id="cf-restart" hidden>Restart File Drop</button>
+        {{end}}
       </div>
       {{end}}
     </div>
@@ -400,6 +421,73 @@ function refresh() {
 refresh();
 setInterval(refresh, 3000);
 
+// Restarting. The server answers, then goes away and comes back on the same
+// port a second or so later, so the page waits for it and reloads itself rather
+// than being left as a dead tab.
+function waitForServer(onGiveUp) {
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    fetch('/status', { cache: 'no-store' }).then(function (r) {
+      if (r.ok) { clearInterval(timer); location.reload(); }
+    }).catch(function () { /* still down, which is most of the point */ });
+    if (tries > 60) { clearInterval(timer); if (onGiveUp) onGiveUp(); }
+  }, 1000);
+}
+
+function restartServer(say, onFail) {
+  var gaveUp = function () {
+    if (onFail) onFail('The server has not come back. Start it again yourself.');
+  };
+  say('Restarting…');
+  fetch('/restart', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (d) {
+    if (d && d.ok === false) { if (onFail) onFail(d.error); return; }
+    waitForServer(gaveUp);
+  }).catch(function () {
+    // Losing the connection is a normal part of this, not a failure.
+    waitForServer(gaveUp);
+  });
+}
+
+// The "Send over Internet" tile when cloudflared is missing. Installing it
+// cannot help the running server - the tunnel is only ever started at boot - so
+// a successful install turns into an offer to restart.
+(function () {
+  var install = document.getElementById('cf-install');
+  if (!install) return;                // the client is present, or not Windows
+  var note = document.getElementById('cf-note');
+  var restart = document.getElementById('cf-restart');
+
+  install.onclick = function () {
+    install.disabled = true;
+    note.textContent = 'Installing… Windows will ask for permission, and the download can take a minute.';
+    fetch('/install-cloudflared', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) {
+          install.disabled = false;
+          note.textContent = d.error;
+          return;
+        }
+        install.hidden = true;
+        restart.hidden = false;
+        note.textContent = 'cloudflared is installed. Restart File Drop to publish the internet link.';
+      })
+      .catch(function () {
+        install.disabled = false;
+        note.textContent = 'Could not reach the server.';
+      });
+  };
+
+  restart.onclick = function () {
+    restart.disabled = true;
+    restartServer(
+      function (t) { note.textContent = t; },
+      function (e) { restart.disabled = false; note.textContent = e; }
+    );
+  };
+})();
+
 // The settings panel. Everything the program can be told to do lives behind the
 // cog; saving writes the TOML file the server reads at start-up. The folder and
 // the batch limit take effect at once, while the listeners, the QR codes and the
@@ -411,6 +499,9 @@ setInterval(refresh, 3000);
   var msg = document.getElementById('settings-msg');
   var save = document.getElementById('settings-save');
   var defaults = null;
+  // What the form looked like when it was last in step with the server, so
+  // Restart can tell whether it would be throwing away edits.
+  var loaded = '';
 
   function field(name) { return form.elements[name]; }
 
@@ -538,6 +629,7 @@ setInterval(refresh, 3000);
     fetch('/settings').then(function (r) { return r.json(); }).then(function (data) {
       defaults = data.defaults;
       fill(data.settings);
+      loaded = JSON.stringify(collect());
       // The row is only worth showing where the check can actually run.
       fw.hidden = !data.firewall;
       fwSay('Windows Firewall can block phones from reaching this machine.', '');
@@ -562,6 +654,22 @@ setInterval(refresh, 3000);
     say('Defaults filled in. Save to keep them.', 'good');
   };
 
+  // Restarting is what makes the "restart to apply" settings actually apply,
+  // without going back to a terminal that may be long gone. It would also throw
+  // away anything typed but not saved, so that is checked first rather than
+  // discovered afterwards.
+  document.getElementById('settings-restart').onclick = function () {
+    if (JSON.stringify(collect()) !== loaded) {
+      say('Save your changes first — restarting now would discard them. Or reopen this panel to get the saved values back.', 'bad');
+      return;
+    }
+    save.disabled = true;
+    restartServer(
+      function (t) { say(t, 'good'); },
+      function (e) { save.disabled = false; say(e, 'bad'); }
+    );
+  };
+
   form.onsubmit = function (e) {
     e.preventDefault();
     save.disabled = true;
@@ -579,6 +687,7 @@ setInterval(refresh, 3000);
         return;
       }
       fill(res.data.settings);
+      loaded = JSON.stringify(collect());
       var note = pending(res.data.restart);
       say(note ? 'Saved. ' + note : 'Saved.', 'good');
       // The drop folder may have moved, and the page behind the sheet is

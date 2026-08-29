@@ -64,6 +64,12 @@ which ones are waiting on one. Opening this page at start-up is not marked,
 because there is nothing to re-apply: it simply describes what the next start
 does.
 
+The panel's **Restart** button does that restart for you, so a changed port does
+not mean going back to a terminal you may have closed. It refuses while the form
+has unsaved edits, rather than discarding them; save first, or reopen the panel
+to get the stored values back. The page waits for the server to come back and
+reloads itself.
+
 The file is plain TOML with a comment above every key, so it can just as well be
 edited by hand:
 
@@ -158,10 +164,18 @@ immediately, within about a second, and the second QR code appears on `/host`
 on its own a few seconds later.
 
 If cloudflared is not installed, the server says so at start-up rather than
-part-way through: the banner reads `off (cloudflared is not installed)`, `/host`
-shows the one LAN code with no placeholder beside it, and no port is taken for a
-tunnel that cannot start. Everything on the local network is unaffected. If the
-client is there but the tunnel fails to come up, the second code stays a
+part-way through. The banner reads `off (cloudflared is not installed)`, no port
+is taken for a tunnel that cannot start, and everything on the local network is
+unaffected.
+
+`/host` says so too, in place of the second code: the **Send over Internet**
+square explains that the client is missing and offers to **Install cloudflared**,
+which runs `winget` behind the ordinary administrator prompt. The running server
+cannot pick up a newly installed client — the tunnel is only ever started at
+boot — so a successful install turns into a **Restart File Drop** button, and
+the page reloads itself once the server is back.
+
+If the client is there but the tunnel fails to come up, the second code stays a
 placeholder for a minute and a half and then removes itself.
 
 `/host` shows **two** QR codes — "Send over Local Area Network" and "Send over
@@ -301,7 +315,10 @@ route at all.
 The firewall button is in the same bracket: someone else on the LAN could make
 an administrator prompt appear on your screen, but only whoever is sitting at
 that screen can answer it, and the server itself never runs elevated — the
-prompt covers the single `netsh` command and nothing else.
+prompt covers the single `netsh` command and nothing else. The same goes for
+installing cloudflared, which is one `winget` command behind the same prompt,
+and for **Restart**, which starts the same program again with the same
+arguments. None of the three is reachable over the internet route.
 
 Because the tunnel is on by default, **each run publishes an upload page on the
 internet**. It is guarded — a random access code, HTTPS, a loopback-only

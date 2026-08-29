@@ -120,6 +120,12 @@ func main() {
 
 	hostTmpl := template.Must(template.New("host").Parse(hostHTMLSrc))
 
+	// Both servers and the tunnel are set up further down, but the restart
+	// handler has to be able to take all three down, so the names exist before
+	// the routes do.
+	var srv, gatedSrv *http.Server
+	var tunnel *exec.Cmd
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +152,11 @@ func main() {
 	// is nothing to wait for, and the page should not offer a second code.
 	tunnelPending := false
 
+	// Set when the internet route is wanted but the client for it is absent.
+	// Unlike the other reasons there is something the operator can do about it
+	// without leaving the page, so /host says so and offers to install it.
+	cloudflaredMissing := false
+
 	hostSnapshot := func() map[string]string {
 		hostMu.RLock()
 		defer hostMu.RUnlock()
@@ -157,6 +168,11 @@ func main() {
 			data["InternetLimit"] = humanSize(cloudflareBodyLimit)
 		case tunnelPending:
 			data["Pending"] = "yes"
+		case cloudflaredMissing:
+			data["NoCloudflared"] = "yes"
+			if cloudflaredInstallSupported {
+				data["CanInstall"] = "yes"
+			}
 		}
 		return data
 	}
@@ -214,6 +230,64 @@ func main() {
 		default:
 			http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// Offered by the "Send over Internet" tile when the client is missing.
+	// Local-only, like everything else that acts on this desktop.
+	mux.HandleFunc("/install-cloudflared", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		log.Printf("installing cloudflared with winget")
+		if err := installCloudflared(); err != nil {
+			log.Printf("cloudflared not installed: %v", err)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		// The tunnel is only ever started at boot, so the running server cannot
+		// pick this up by itself however new the client is.
+		log.Printf("cloudflared installed - restart to publish the internet link")
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restart": true})
+	})
+
+	// Restarting is how a setting that needs it actually takes effect, without
+	// the operator going back to the terminal they may no longer have.
+	mux.HandleFunc("/restart", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		if !restartSupported {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": false, "error": "restarting from the page is only supported on Windows"})
+			return
+		}
+
+		log.Printf("restarting")
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+
+		// Answer first and tear down afterwards: the reply travels over a
+		// connection this is about to close.
+		go func() {
+			time.Sleep(400 * time.Millisecond)
+			if tunnel != nil {
+				tunnel.Process.Kill()
+			}
+			// Both ports have to be free before the replacement asks for them.
+			srv.Close()
+			if gatedSrv != nil {
+				gatedSrv.Close()
+			}
+			time.Sleep(200 * time.Millisecond)
+
+			if err := relaunch(restartArgs()); err != nil {
+				// Nothing is listening any more, so say plainly that it needs
+				// starting by hand rather than sit here looking alive.
+				log.Fatalf("could not restart: %v - please start it again yourself", err)
+			}
+			os.Exit(0)
+		}()
 	})
 
 	// The settings panel behind the cog on /host. It is deliberately absent
@@ -304,8 +378,7 @@ func main() {
 	// The internet route, unless asked to stay local. It listens only on
 	// loopback: the tunnel is the sole way in, so public traffic always meets
 	// the access gate while people on the LAN carry on using the plain address.
-	var tunnel *exec.Cmd
-
+	//
 	// Why there is no internet link, when there is none to be had. Knowing this
 	// before the banner prints is the difference between saying the link is on
 	// its way and admitting it is not coming.
@@ -321,6 +394,7 @@ func main() {
 		bin, err := cloudflaredPath()
 		if err != nil {
 			noInternet = "cloudflared is not installed"
+			cloudflaredMissing = true
 			log.Printf("no internet link: %v", err)
 			log.Printf("local uploads are unaffected; use -wifi-only to stop trying")
 		}
@@ -341,6 +415,9 @@ func main() {
 			Handler:           publicGate(token, logRequests(mux)),
 			ReadHeaderTimeout: 20 * time.Second,
 		}
+		// Kept so a restart can give this port back before the replacement
+		// tries to take it.
+		gatedSrv = gated
 
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", publicPort))
 		if err != nil {
@@ -399,7 +476,7 @@ func main() {
 		w.Write(png)
 	})
 
-	srv := &http.Server{
+	srv = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           logRequests(mux),
 		ReadHeaderTimeout: 20 * time.Second,
@@ -476,6 +553,14 @@ func main() {
 		}
 		log.Fatalf("server stopped: %v", err)
 	}
+
+	// The server was closed on purpose: either Ctrl+C or the Restart button.
+	// Both finish by calling os.Exit themselves, and both are still working
+	// when Serve returns - returning from main here would kill the goroutine
+	// doing that work, which is exactly how a restart loses its replacement.
+	// The wait is bounded so a shutdown that never completes still ends.
+	time.Sleep(30 * time.Second)
+	log.Printf("shutdown did not finish; exiting anyway")
 }
 
 // handleUpload streams each part of the multipart body straight to disk, so a
@@ -720,6 +805,15 @@ func publicGate(token string, next http.Handler) http.Handler {
 }
 
 var tunnelURLPattern = regexp.MustCompile(`https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com`)
+
+// restartArgs repeats this run's arguments for the replacement, with the
+// browser suppressed. Whoever pressed Restart is looking at the page already
+// and it reloads itself when the server answers again; opening a second tab
+// would be the only visible effect. The flag is appended rather than filtered,
+// because a later occurrence is the one the flag package keeps.
+func restartArgs() []string {
+	return append(append([]string{}, os.Args[1:]...), "-open-host=false")
+}
 
 // cloudflaredPath finds the tunnel client. It is looked up before anything is
 // promised about an internet link, so that a machine without it says so at

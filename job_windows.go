@@ -17,6 +17,14 @@ import (
 const (
 	jobObjectExtendedLimitInformation = 9
 	jobObjectLimitKillOnJobClose      = 0x2000
+
+	// Permitting breakaway is what lets the Restart button work. Everything we
+	// spawn is meant to die with us, which is the whole point of the job - but
+	// the replacement copy of ourselves has to survive the exit that follows it
+	// by milliseconds, and without this the job would take it down too. A child
+	// only escapes by asking, with CREATE_BREAKAWAY_FROM_JOB, so cloudflared and
+	// everything else stay bound to our lifetime as before.
+	jobObjectLimitBreakawayOK = 0x0800
 )
 
 type ioCounters struct {
@@ -66,7 +74,7 @@ func adoptChildProcesses() {
 	}
 
 	info := jobObjectExtendedLimitInfo{}
-	info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose
+	info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose | jobObjectLimitBreakawayOK
 	ok, _, err := setJobInfo.Call(handle, jobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info))
 	if ok == 0 {
