@@ -120,6 +120,28 @@
     font-size: 11px; font-weight: 600; letter-spacing: .03em;
     text-transform: none; color: var(--muted);
   }
+  .fw {
+    margin: 18px 0 4px; padding: 14px 16px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+  }
+  .fw-head { display: flex; gap: 10px; align-items: flex-start; }
+  .fw-dot {
+    width: 9px; height: 9px; margin-top: 7px; flex: none;
+    border-radius: 50%; background: var(--muted);
+  }
+  .fw-dot.good { background: #16a34a; }
+  .fw-dot.bad { background: #dc2626; }
+  .fw-dot.busy { background: var(--accent); }
+  .fw-text { font-size: 14px; line-height: 1.45; }
+  .fw-actions { display: flex; gap: 8px; margin: 12px 0 0 19px; }
+  .fw-actions button {
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    padding: 7px 13px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  .fw-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .fw-actions button:disabled { opacity: .55; cursor: default; }
+
   .field { display: block; margin-top: 14px; }
   .field .name { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
   .field input {
@@ -166,6 +188,17 @@
     </div>
 
     <div class="sheet-body">
+      <div class="fw" id="fw" hidden>
+        <div class="fw-head">
+          <span class="fw-dot" id="fw-dot"></span>
+          <span class="fw-text" id="fw-text">Windows Firewall can block phones from reaching this machine.</span>
+        </div>
+        <div class="fw-actions">
+          <button type="button" id="fw-check">Check the firewall</button>
+          <button type="button" class="primary" id="fw-fix" hidden>Let it through</button>
+        </div>
+      </div>
+
       <fieldset>
         <legend>Uploads</legend>
 
@@ -424,12 +457,91 @@ setInterval(refresh, 3000);
     return 'Restart the server to apply: ' + list.join(', ') + '.';
   }
 
+  // The firewall row. Checking shells out to PowerShell on the server, which
+  // takes a couple of seconds, so nothing here runs until the button is
+  // pressed. "Let it through" raises the Windows administrator prompt on the
+  // machine running the server - the answer to it is a click there, not here.
+  var fw = document.getElementById('fw');
+  var fwDot = document.getElementById('fw-dot');
+  var fwText = document.getElementById('fw-text');
+  var fwCheck = document.getElementById('fw-check');
+  var fwFix = document.getElementById('fw-fix');
+
+  function fwSay(text, dot) {
+    fwText.textContent = text;
+    fwDot.className = 'fw-dot' + (dot ? ' ' + dot : '');
+  }
+
+  function fwShow(s) {
+    if (!s.supported) { fw.hidden = true; return; }     // not Windows
+    fw.hidden = false;
+
+    if (s.error) {
+      fwSay(s.error, 'bad');
+      fwFix.hidden = false;
+      return;
+    }
+    if (s.allowed) {
+      if (s.how === 'firewall-off') {
+        fwSay('Getting through — Windows Firewall is switched off for this network.', 'good');
+      } else if (s.how === 'program') {
+        fwSay('Getting through — this program is allowed through Windows Firewall.', 'good');
+      } else {
+        fwSay('Getting through — a rule allows this port through Windows Firewall.', 'good');
+      }
+      fwFix.hidden = true;
+      return;
+    }
+
+    var note = 'Blocked — Windows Firewall has no rule letting this program in, ' +
+               'so phones on the network will not reach it.';
+    // A rule for Private and Domain does nothing on a network Windows has
+    // filed as Public, so say that rather than let the fix quietly not work.
+    if ((s.profiles || '').indexOf('Public') !== -1) {
+      note += ' This network is set to Public, so also switch it to Private in ' +
+              'Windows network settings.';
+    }
+    fwSay(note, 'bad');
+    fwFix.hidden = false;
+  }
+
+  fwCheck.onclick = function () {
+    fwCheck.disabled = true;
+    fwSay('Asking Windows…', 'busy');
+    fetch('/firewall').then(function (r) { return r.json(); }).then(function (s) {
+      fwCheck.disabled = false;
+      fwShow(s);
+    }).catch(function () {
+      fwCheck.disabled = false;
+      fwSay('Could not reach the server to check.', 'bad');
+    });
+  };
+
+  fwFix.onclick = function () {
+    fwFix.disabled = true;
+    fwCheck.disabled = true;
+    fwSay('Waiting for the Windows administrator prompt on the server…', 'busy');
+    fetch('/firewall', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (s) {
+      fwFix.disabled = false;
+      fwCheck.disabled = false;
+      fwShow(s);
+    }).catch(function () {
+      fwFix.disabled = false;
+      fwCheck.disabled = false;
+      fwSay('Could not reach the server.', 'bad');
+    });
+  };
+
   document.getElementById('cog').onclick = function () {
     say('');
     save.disabled = false;
     fetch('/settings').then(function (r) { return r.json(); }).then(function (data) {
       defaults = data.defaults;
       fill(data.settings);
+      // The row is only worth showing where the check can actually run.
+      fw.hidden = !data.firewall;
+      fwSay('Windows Firewall can block phones from reaching this machine.', '');
+      fwFix.hidden = true;
       document.getElementById('settings-path').textContent = data.path;
       say(pending(data.restart), 'good');
     }).catch(function () {

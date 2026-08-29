@@ -121,12 +121,25 @@ forever as long as that address does not change. Two things to do once:
    ```
 
 2. **Let it through the firewall.** The first run usually pops up a Windows
-   Defender prompt — tick **Private networks** and allow it. If you miss the
-   prompt, run this once from an admin terminal:
+   Defender prompt — tick **Private networks** and allow it.
+
+   If you missed the prompt, the settings panel has a **Check the firewall**
+   button at the top. It asks Windows whether an inbound rule actually covers
+   this program on the network you are on, and if not offers **Let it through**,
+   which raises the ordinary administrator prompt and adds the rule. Nothing is
+   changed unless you click it and then agree to that prompt.
+
+   The equivalent by hand, from an admin terminal:
 
    ```bash
    netsh advfirewall firewall add rule name="File Drop Server" dir=in action=allow protocol=TCP localport=8080
    ```
+
+   The button writes its rule against the program rather than the port, so it
+   survives a change of port. It covers **Private and Domain** networks only —
+   if Windows has filed your network as Public the check says so and asks you to
+   switch it to Private, rather than quietly opening the machine up on a network
+   it has been told not to trust.
 
 Then print `qr-code.png` once and reuse it with every client.
 
@@ -278,6 +291,11 @@ with a client sitting in front of you. The same goes for the settings panel —
 anyone who can open `/host` can change where uploads land, exactly as they can
 already open folders on your desktop from it. It is not exposed to the internet
 route at all.
+
+The firewall button is in the same bracket: someone else on the LAN could make
+an administrator prompt appear on your screen, but only whoever is sitting at
+that screen can answer it, and the server itself never runs elevated — the
+prompt covers the single `netsh` command and nothing else.
 
 Because the tunnel is on by default, **each run publishes an upload page on the
 internet**. It is guarded — a random access code, HTTPS, a loopback-only

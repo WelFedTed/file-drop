@@ -187,6 +187,35 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(cfg.Dir, cfg.Recent)})
 	})
 
+	// The firewall button at the top of the settings panel. Like /settings and
+	// /open it is absent from publicGate's allow-list and so is local-only: a
+	// POST here raises an administrator prompt on this desktop, which only the
+	// person sitting at it can answer.
+	mux.HandleFunc("/firewall", func(w http.ResponseWriter, r *http.Request) {
+		port := currentSettings().Port
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, firewallStatus(port))
+
+		case http.MethodPost:
+			log.Printf("asking Windows to allow this program through the firewall")
+			if err := firewallAllow(port); err != nil {
+				log.Printf("firewall rule not added: %v", err)
+				// The status still goes back, so the panel can show where
+				// things actually stand rather than only what failed.
+				report := firewallStatus(port)
+				report.Error = err.Error()
+				writeJSON(w, http.StatusOK, report)
+				return
+			}
+			log.Printf("firewall rule added")
+			writeJSON(w, http.StatusOK, firewallStatus(port))
+
+		default:
+			http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// The settings panel behind the cog on /host. It is deliberately absent
 	// from publicGate's allow-list, so it exists on the local network only.
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +227,7 @@ func main() {
 				"defaults": defaultSettings(),
 				"path":     configPath,
 				"saved":    configFound.Load(),
+				"firewall": firewallSupported,
 				"restart":  restartNeeded(startupSettings, current),
 			})
 
