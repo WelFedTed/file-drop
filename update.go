@@ -269,12 +269,32 @@ func replaceExecutable(payload []byte) error {
 
 // tidyPreviousUpdate clears the copy left behind by the last update. It cannot
 // be deleted at the time, because it is the program doing the deleting.
+//
+// After an update the copy is usually still running when its replacement
+// starts - it spawns us and exits milliseconds later - and Windows will not
+// delete a file that is a running image. So this keeps trying quietly for a
+// short while rather than giving up on the first refusal. Failing entirely
+// costs nothing: the next ordinary start clears it, when nothing holds it.
 func tidyPreviousUpdate() {
 	exe, err := os.Executable()
 	if err != nil {
 		return
 	}
-	os.Remove(exe + ".old")
+	previous := exe + ".old"
+	if os.Remove(previous) == nil {
+		return
+	}
+	go func() {
+		for i := 0; i < 10; i++ {
+			time.Sleep(time.Second)
+			if _, err := os.Stat(previous); err != nil {
+				return
+			}
+			if os.Remove(previous) == nil {
+				return
+			}
+		}
+	}()
 }
 
 func firstLines(s string, n int) string {
