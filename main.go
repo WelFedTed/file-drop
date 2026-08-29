@@ -41,17 +41,22 @@ var indexHTML []byte
 //go:embed web/host.html
 var hostHTMLSrc string
 
+// Every flag here has a twin in the settings file, and the two meet in
+// Settings.applyFlags: the file supplies the values, a flag typed on the
+// command line overrides its own for that run only.
 var (
-	flagPort  = flag.Int("port", 8080, "TCP port to listen on")
-	flagDir   = flag.String("dir", `C:\file-drop-server`, "root folder that receives the uploaded batches")
+	flagPort  = flag.Int("port", defaultPort, "TCP port to listen on")
+	flagDir   = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
 	flagHost  = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
-	flagMaxMB = flag.Int64("max", 10240, "maximum size of a single upload batch in MB (0 for no limit)")
-	flagOpen  = flag.Bool("open", true, "open each finished batch in Windows Explorer")
+	flagMaxMB = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
+	flagOpen  = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
 
 	flagWifiOnly   = flag.Bool("wifi-only", false, "stay on the local network: do not publish an internet link")
 	flagPublic     = flag.String("public", "", "public HTTPS address to advertise, if you run your own tunnel")
 	flagPublicPort = flag.Int("public-port", 0, "local port the internet listener uses (defaults to -port + 1)")
 	flagToken      = flag.String("token", "", "access code for internet uploads (a random one is made when empty)")
+
+	flagConfig = flag.String("config", "", "settings file to read and save (defaults to "+settingsFile+" beside the program)")
 )
 
 // Cloudflare's free tier refuses request bodies over 100 MB, so uploads that
@@ -71,22 +76,25 @@ func main() {
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 
-	root, err := filepath.Abs(*flagDir)
-	if err != nil {
-		log.Fatalf("drop folder %q is not a usable path: %v", *flagDir, err)
+	if err := loadSettings(); err != nil {
+		log.Fatalf("%v", err)
 	}
+	cfg := currentSettings()
+
+	root := cfg.Dir
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		log.Fatalf("cannot create drop folder %s: %v", root, err)
 	}
 
-	host := *flagHost
+	host := cfg.Host
 	if host == "" {
+		var err error
 		host, err = lanIP()
 		if err != nil {
 			log.Fatalf("could not work out this machine's LAN address (%v) - pass one with -host", err)
 		}
 	}
-	publicURL := fmt.Sprintf("http://%s:%d/", host, *flagPort)
+	publicURL := fmt.Sprintf("http://%s:%d/", host, cfg.Port)
 
 	qr, err := qrcode.New(publicURL, qrcode.Medium)
 	if err != nil {
@@ -99,10 +107,14 @@ func main() {
 
 	// Keep a printable copy on disk so the code can be stuck on a wall once and
 	// reused indefinitely, as long as this machine keeps the same address and port.
-	qrPath := filepath.Join(root, "qr-code.png")
-	if err := os.WriteFile(qrPath, qrPNG, 0o644); err != nil {
-		log.Printf("warning: could not save %s: %v", qrPath, err)
+	saveQRCode := func(dir string) string {
+		path := filepath.Join(dir, qrCodeFile)
+		if err := os.WriteFile(path, qrPNG, 0o644); err != nil {
+			log.Printf("warning: could not save %s: %v", path, err)
+		}
+		return path
 	}
+	qrPath := saveQRCode(root)
 
 	hostTmpl := template.Must(template.New("host").Parse(hostHTMLSrc))
 
@@ -128,7 +140,7 @@ func main() {
 	hostSnapshot := func() map[string]string {
 		hostMu.RLock()
 		defer hostMu.RUnlock()
-		data := map[string]string{"URL": publicURL, "Root": root}
+		data := map[string]string{"URL": publicURL, "Root": currentSettings().Dir}
 		if internetURL != "" {
 			data["InternetURL"] = internetURL
 			data["InternetHost"] = strings.TrimPrefix(strings.SplitN(internetURL, "/?k=", 2)[0], "https://")
@@ -156,12 +168,70 @@ func main() {
 		w.Write(qrPNG)
 	})
 
-	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
-		handleUpload(w, r, root)
-	})
+	mux.HandleFunc("/upload", handleUpload)
 
 	mux.HandleFunc("/batches", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(root, 15)})
+		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(currentSettings().Dir, 15)})
+	})
+
+	// The settings panel behind the cog on /host. It is deliberately absent
+	// from publicGate's allow-list, so it exists on the local network only.
+	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			current := currentSettings()
+			writeJSON(w, http.StatusOK, map[string]any{
+				"settings": current,
+				"defaults": defaultSettings(),
+				"path":     configPath,
+				"saved":    configFound.Load(),
+				"restart":  restartNeeded(startupSettings, current),
+			})
+
+		case http.MethodPost:
+			var in Settings
+			// A settings post is a handful of short fields; anything larger is
+			// not one of ours.
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "those settings were not readable"})
+				return
+			}
+			if err := in.normalise(); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
+			// Prove the folder is usable before saving a setting that would
+			// send every future batch somewhere that cannot be written.
+			if err := os.MkdirAll(in.Dir, 0o755); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "cannot use " + in.Dir + ": " + err.Error()})
+				return
+			}
+			if err := in.save(configPath); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error": "could not write " + configPath + ": " + err.Error()})
+				return
+			}
+
+			was := currentSettings()
+			setSettings(in)
+			configFound.Store(true)
+			log.Printf("settings saved to %s", configPath)
+			if in.Dir != was.Dir {
+				log.Printf("uploads now land in %s", in.Dir)
+				saveQRCode(in.Dir)
+			}
+
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":       true,
+				"settings": in,
+				"path":     configPath,
+				"restart":  restartNeeded(startupSettings, in),
+			})
+
+		default:
+			http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+		}
 	})
 
 	// Opens a batch folder for whoever is sitting at this machine. A browser
@@ -173,6 +243,7 @@ func main() {
 			http.Error(w, "not a batch folder name", http.StatusBadRequest)
 			return
 		}
+		root := currentSettings().Dir
 		dir := filepath.Join(root, name)
 		if !within(root, dir) {
 			http.Error(w, "not a batch folder name", http.StatusBadRequest)
@@ -193,15 +264,15 @@ func main() {
 	var tunnel *exec.Cmd
 	tunnelPending := false
 
-	if !*flagWifiOnly {
-		token := *flagToken
+	if !cfg.WifiOnly {
+		token := cfg.Token
 		if token == "" {
 			token = randomToken()
 		}
 
-		publicPort := *flagPublicPort
+		publicPort := cfg.PublicPort
 		if publicPort == 0 {
-			publicPort = *flagPort + 1
+			publicPort = cfg.Port + 1
 		}
 		gated := &http.Server{
 			Handler:           publicGate(token, logRequests(mux)),
@@ -230,8 +301,8 @@ func main() {
 				hostMu.Unlock()
 			}
 
-			if *flagPublic != "" {
-				publish(*flagPublic)
+			if cfg.Public != "" {
+				publish(cfg.Public)
 			} else {
 				// Bringing the tunnel up takes the better part of a minute, so it
 				// happens in the background: the LAN page is usable immediately and
@@ -265,7 +336,7 @@ func main() {
 	})
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", *flagPort),
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           logRequests(mux),
 		ReadHeaderTimeout: 20 * time.Second,
 		// No read/write timeouts on purpose: a phone on a weak signal can spend a
@@ -277,8 +348,8 @@ func main() {
 	fmt.Printf("  File Drop is running\n\n")
 	fmt.Printf("  On this network:               %s\n", publicURL)
 	switch {
-	case *flagWifiOnly:
-		fmt.Printf("  From anywhere:                 off (-wifi-only)\n")
+	case cfg.WifiOnly:
+		fmt.Printf("  From anywhere:                 off (Wi-Fi only)\n")
 	case tunnelPending:
 		fmt.Printf("  From anywhere:                 starting, appears on /host shortly\n")
 	default:
@@ -286,10 +357,15 @@ func main() {
 		fmt.Printf("  From anywhere:                 %s\n", internetURL)
 		hostMu.RUnlock()
 	}
-	fmt.Printf("  Both codes on one screen:      http://localhost:%d/host\n", *flagPort)
+	fmt.Printf("  Both codes and the settings:   http://localhost:%d/host\n", cfg.Port)
 	fmt.Printf("  Printable QR image:            %s\n", qrPath)
 	fmt.Printf("  Uploads land in:               %s\\<date>_<time>\\\n", root)
-	if !*flagWifiOnly {
+	if configFound.Load() {
+		fmt.Printf("  Settings file:                 %s\n", configPath)
+	} else {
+		fmt.Printf("  Settings file:                 %s (defaults - not written yet)\n", configPath)
+	}
+	if !cfg.WifiOnly {
 		fmt.Printf("\n  The internet address changes every restart, and Cloudflare caps\n")
 		fmt.Printf("  uploads at %s over that route. The local one is unlimited.\n", humanSize(cloudflareBodyLimit))
 	}
@@ -318,12 +394,17 @@ func main() {
 
 // handleUpload streams each part of the multipart body straight to disk, so a
 // batch of large videos never has to fit in memory.
-func handleUpload(w http.ResponseWriter, r *http.Request, root string) {
+func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	limit := *flagMaxMB * 1024 * 1024
+	// One snapshot for the whole batch: a setting changed mid-upload must not
+	// land half of it in the old folder and half in the new one.
+	cfg := currentSettings()
+	root := cfg.Dir
+
+	limit := cfg.MaxMB * 1024 * 1024
 	if routeLimit, ok := r.Context().Value(maxBytesKey{}).(int64); ok {
 		// The internet route has a ceiling of its own; take the tighter of the two.
 		if limit == 0 || routeLimit < limit {
@@ -435,7 +516,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, root string) {
 		if copyErr != nil || closeErr != nil {
 			discardBatch(dir)
 			if isTooBig(copyErr) {
-				log.Printf("rejected: batch over the %d MB limit", *flagMaxMB)
+				log.Printf("rejected: batch over the %d MB limit", cfg.MaxMB)
 				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": tooBigMessage(limit)})
 				return
 			}
@@ -487,7 +568,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, root string) {
 
 	// Only once the batch is complete and checksum-clean, so a window never
 	// opens on files that are about to be thrown away.
-	if *flagOpen {
+	if cfg.Open {
 		openFolder(dir)
 	}
 

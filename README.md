@@ -37,27 +37,66 @@ It prints a scannable QR code straight into the terminal, along with:
 | Upload page for clients | `http://<your-lan-ip>:8080/` |
 | Big QR code to show on screen | `http://localhost:8080/host` |
 | Printable QR image | `C:\file-drop-server\qr-code.png` |
+| Settings file | `file-drop-server.toml`, beside the program |
 
 Show the client `/host` on your monitor, or print `qr-code.png` and stick it on
 the wall. Both point at the same address.
 
+## Settings
+
+Everything the server can be told to do is behind the **cog in the top right of
+`/host`** — no need to remember a flag. Saving writes a `file-drop-server.toml`
+next to the program, which is read the next time it starts.
+
+There is no file until you save one, and there does not have to be: with no
+settings file the defaults below are used. Delete it at any time to go back to
+them.
+
+The drop folder and the batch limit take effect the moment you save. The
+listeners, the QR codes and the tunnel are built once at start-up, so changing
+the port, the QR address or anything about the internet link needs a restart —
+those fields are marked **restart to apply**, and the panel tells you which
+ones are waiting on one.
+
+The file is plain TOML with a comment above every key, so it can just as well be
+edited by hand:
+
+```toml
+# Root folder that receives the uploaded batches.
+dir = "D:\\client-uploads"
+
+# Largest single upload batch, in MB. 0 removes the limit.
+max_mb = 20480
+```
+
 ### Options
 
-| Flag | Default | What it does |
-|---|---|---|
-| `-port` | `8080` | Port to listen on |
-| `-dir` | `C:\file-drop-server` | Where batches are saved |
-| `-host` | auto | Address baked into the QR code |
-| `-max` | `10240` | Largest single batch, in MB (`0` = no limit) |
-| `-open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
-| `-wifi-only` | `false` | Stay on the LAN; publish no internet link at all |
-| `-public` | — | Advertise this HTTPS address instead of starting a tunnel |
-| `-public-port` | `-port` + 1 | Loopback port the internet listener uses |
-| `-token` | random | Access code for the internet route |
+Each setting has a flag as well. A flag typed on the command line wins over the
+file, for that run only — handy for a one-off without disturbing the saved
+setup. Anything not typed comes from the file, and anything not in the file
+falls back to the default.
+
+| Flag | TOML key | Default | What it does |
+|---|---|---|---|
+| `-port` | `port` | `8080` | Port to listen on |
+| `-dir` | `dir` | `C:\file-drop-server` | Where batches are saved |
+| `-host` | `host` | auto | Address baked into the QR code |
+| `-max` | `max_mb` | `10240` | Largest single batch, in MB (`0` = no limit) |
+| `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
+| `-wifi-only` | `wifi_only` | `false` | Stay on the LAN; publish no internet link at all |
+| `-public` | `public` | — | Advertise this HTTPS address instead of starting a tunnel |
+| `-public-port` | `public_port` | `-port` + 1 | Loopback port the internet listener uses |
+| `-token` | `token` | random | Access code for the internet route |
+| `-config` | — | beside the program | Settings file to read and save |
 
 ```bash
 .\file-drop-server.exe -port 9000 -dir D:\client-uploads -max 20480
 ```
+
+A settings file that cannot be understood stops the server with the offending
+line, rather than being ignored — being quietly served on the wrong port is
+worse than not starting. Keys it does not recognise are skipped, so a file
+written by a later version still starts an earlier one.
 
 ## Keeping the QR code permanent
 
@@ -113,8 +152,8 @@ internet cannot detect the LAN and switch to it. One code cannot cover both.
 - It listens on **loopback only**. The tunnel is the sole way in, so public
   traffic always meets the access gate while LAN clients are unaffected.
 - It serves **only the upload page and the upload endpoint**. The operator's
-  screen, the batch listing and `/open` — which puts windows on your desktop —
-  are not reachable from the internet at all.
+  screen, the batch listing, the settings panel and `/open` — which puts windows
+  on your desktop — are not reachable from the internet at all.
 - Every internet link carries a random **access code**. It rides inside the QR
   code, so clients never type it; the first request swaps it for a cookie and
   redirects to a clean address. Without it: `403`. Pass `-token` to fix the code
@@ -224,7 +263,10 @@ the click goes back to the server, which opens the window itself.
 
 On the LAN there is no password: anyone who can reach this machine can upload to
 it, over plain HTTP. That is the right trade-off on a home or office network
-with a client sitting in front of you.
+with a client sitting in front of you. The same goes for the settings panel —
+anyone who can open `/host` can change where uploads land, exactly as they can
+already open folders on your desktop from it. It is not exposed to the internet
+route at all.
 
 Because the tunnel is on by default, **each run publishes an upload page on the
 internet**. It is guarded — a random access code, HTTPS, a loopback-only

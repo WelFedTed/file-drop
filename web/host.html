@@ -73,9 +73,176 @@
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--muted); font-size: 15px; margin: 0; }
   .path { color: var(--muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+
+  /* Settings: a cog in the corner of the screen, opening a sheet over the page. */
+  .cog {
+    position: fixed; top: 18px; right: 18px; z-index: 5;
+    width: 44px; height: 44px; padding: 0;
+    display: grid; place-items: center;
+    background: var(--card); color: var(--muted);
+    border: 1px solid var(--line); border-radius: 50%;
+    box-shadow: var(--shadow); cursor: pointer;
+    transition: color .15s, transform .35s ease;
+  }
+  .cog:hover, .cog:focus-visible { color: var(--accent); outline: none; transform: rotate(60deg); }
+  .cog svg { width: 21px; height: 21px; fill: currentColor; display: block; }
+
+  dialog {
+    padding: 0; border: 0; background: transparent; color: var(--ink);
+    width: min(560px, calc(100% - 28px));
+  }
+  dialog::backdrop { background: rgba(8, 10, 14, .55); }
+  .sheet {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 20px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  .sheet-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line);
+  }
+  .sheet-head h3 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
+  .x {
+    border: 0; background: transparent; color: var(--muted);
+    font-size: 20px; line-height: 1; padding: 6px; margin: -6px;
+    cursor: pointer; border-radius: 8px;
+  }
+  .x:hover, .x:focus-visible { color: var(--ink); outline: none; }
+  .sheet-body { padding: 4px 22px; max-height: min(62vh, 560px); overflow-y: auto; }
+  fieldset { border: 0; padding: 18px 0; margin: 0; border-bottom: 1px solid var(--line); }
+  fieldset:last-of-type { border-bottom: 0; }
+  legend {
+    padding: 0; font-size: 13px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted);
+  }
+  .badge {
+    margin-left: 8px; padding: 2px 7px; border-radius: 999px;
+    background: var(--bg); border: 1px solid var(--line);
+    font-size: 11px; font-weight: 600; letter-spacing: .03em;
+    text-transform: none; color: var(--muted);
+  }
+  .field { display: block; margin-top: 14px; }
+  .field .name { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .field input {
+    width: 100%; padding: 9px 11px; font: inherit; font-size: 15px;
+    color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  .field input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+  .field.mono input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+  .hint { display: block; margin-top: 5px; font-size: 13px; color: var(--muted); }
+  .check { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-size: 15px; }
+  .check input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+  .sheet-foot {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 16px 22px; border-top: 1px solid var(--line); background: var(--bg);
+  }
+  .sheet-foot .spacer { flex: 1 1 auto; }
+  .sheet-foot button {
+    font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+    padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--ink);
+  }
+  .sheet-foot button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sheet-foot button:disabled { opacity: .55; cursor: default; }
+  .msg { margin: 0 22px 16px; font-size: 14px; color: var(--muted); }
+  .msg.bad { color: #c0392b; }
+  @media (prefers-color-scheme: dark) { .msg.bad { color: #ff8a7a; } }
+  .msg.good { color: var(--accent); }
 </style>
 </head>
 <body>
+
+<button class="cog" id="cog" type="button" title="Settings" aria-label="Settings">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-1.7-1l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5c-.6.2-1.2.6-1.7 1l-2.4-1a.5.5 0 0 0-.6.2L2.5 8.8a.5.5 0 0 0 .1.6L4.6 11a7.6 7.6 0 0 0 0 2l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3c.1.2.4.3.6.2l2.4-1c.5.4 1.1.8 1.7 1l.4 2.5c0 .2.2.4.5.4h3.8c.3 0 .5-.2.5-.4l.4-2.5c.6-.2 1.2-.6 1.7-1l2.4 1c.2.1.5 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/>
+  </svg>
+</button>
+
+<dialog id="settings" aria-labelledby="settings-title">
+  <form class="sheet" id="settings-form">
+    <div class="sheet-head">
+      <h3 id="settings-title">Settings</h3>
+      <button class="x" type="button" data-close aria-label="Close">&#10005;</button>
+    </div>
+
+    <div class="sheet-body">
+      <fieldset>
+        <legend>Uploads</legend>
+
+        <label class="field mono">
+          <span class="name">Drop folder</span>
+          <input name="dir" type="text" spellcheck="false" autocomplete="off" autocapitalize="off">
+          <span class="hint">Every batch gets its own timestamped folder inside this one.</span>
+        </label>
+
+        <label class="field">
+          <span class="name">Largest batch</span>
+          <input name="max_mb" type="number" min="0" step="1" inputmode="numeric">
+          <span class="hint">In MB; 0 for no limit. The internet route is capped at 100 MB either way.</span>
+        </label>
+
+        <label class="check">
+          <input name="open" type="checkbox">
+          <span>Open each finished batch in File Explorer</span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>This network <span class="badge">restart to apply</span></legend>
+
+        <label class="field">
+          <span class="name">Port</span>
+          <input name="port" type="number" min="1" max="65535" inputmode="numeric">
+        </label>
+
+        <label class="field mono">
+          <span class="name">Address in the QR code</span>
+          <input name="host" type="text" placeholder="detected automatically" spellcheck="false" autocomplete="off">
+          <span class="hint">Leave empty to use this machine's LAN address. Set it to keep a printed code working.</span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Internet link <span class="badge">restart to apply</span></legend>
+
+        <label class="check">
+          <input name="wifi_only" type="checkbox">
+          <span>Wi-Fi only &mdash; never publish an internet link</span>
+        </label>
+
+        <label class="field mono">
+          <span class="name">Access code</span>
+          <input name="token" type="text" placeholder="a fresh random one each start" spellcheck="false" autocomplete="off">
+          <span class="hint">Fixing this keeps the internet link valid across restarts.</span>
+        </label>
+
+        <label class="field mono">
+          <span class="name">Your own tunnel address</span>
+          <input name="public" type="text" placeholder="https://drop.example.com/" spellcheck="false" autocomplete="off">
+          <span class="hint">Set this to advertise a tunnel you run yourself instead of a Cloudflare quick tunnel.</span>
+        </label>
+
+        <label class="field">
+          <span class="name">Internet listener port</span>
+          <input name="public_port" type="number" min="0" max="65535" inputmode="numeric">
+          <span class="hint">Loopback only. 0 uses the port above, plus one.</span>
+        </label>
+      </fieldset>
+
+      <p class="path" style="margin:0 0 18px">Saved in <span id="settings-path">the settings file</span></p>
+    </div>
+
+    <p class="msg" id="settings-msg" hidden></p>
+
+    <div class="sheet-foot">
+      <button type="button" id="settings-reset">Restore defaults</button>
+      <span class="spacer"></span>
+      <button type="button" data-close>Cancel</button>
+      <button type="submit" class="primary" id="settings-save">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <div class="wrap">
 
   <section class="card hero">
@@ -110,7 +277,7 @@
   <section class="card">
     <h2>Recent drops</h2>
     <div id="recent"><p class="empty">Nothing yet — uploads will appear here.</p></div>
-    <p class="path" style="margin-top:18px">Saving to {{.Root}}</p>
+    <p class="path" style="margin-top:18px">Saving to <span id="root-path">{{.Root}}</span></p>
   </section>
 
 </div>
@@ -184,6 +351,115 @@ function refresh() {
 
 refresh();
 setInterval(refresh, 3000);
+
+// The settings panel. Everything the program can be told to do lives behind the
+// cog; saving writes the TOML file the server reads at start-up. The folder and
+// the batch limit take effect at once, while the listeners, the QR codes and the
+// tunnel are built once at start-up and so need a restart - which is what the
+// "restart to apply" badges, and the note after saving, are about.
+(function () {
+  var dlg = document.getElementById('settings');
+  var form = document.getElementById('settings-form');
+  var msg = document.getElementById('settings-msg');
+  var save = document.getElementById('settings-save');
+  var defaults = null;
+
+  function field(name) { return form.elements[name]; }
+
+  function fill(s) {
+    field('dir').value = s.dir || '';
+    field('max_mb').value = s.max_mb;
+    field('open').checked = !!s.open;
+    field('port').value = s.port;
+    field('host').value = s.host || '';
+    field('wifi_only').checked = !!s.wifi_only;
+    field('token').value = s.token || '';
+    field('public').value = s.public || '';
+    field('public_port').value = s.public_port;
+  }
+
+  function collect() {
+    return {
+      dir: field('dir').value,
+      max_mb: Number(field('max_mb').value || 0),
+      open: field('open').checked,
+      port: Number(field('port').value || 0),
+      host: field('host').value,
+      wifi_only: field('wifi_only').checked,
+      token: field('token').value,
+      public: field('public').value,
+      public_port: Number(field('public_port').value || 0)
+    };
+  }
+
+  function say(text, kind) {
+    msg.textContent = text;
+    msg.className = 'msg' + (kind ? ' ' + kind : '');
+    msg.hidden = !text;
+  }
+
+  // Anything already changed but not yet restarted into is still pending, so
+  // the panel keeps saying so every time it is opened.
+  function pending(list) {
+    if (!list || !list.length) return '';
+    return 'Restart the server to apply: ' + list.join(', ') + '.';
+  }
+
+  document.getElementById('cog').onclick = function () {
+    say('');
+    save.disabled = false;
+    fetch('/settings').then(function (r) { return r.json(); }).then(function (data) {
+      defaults = data.defaults;
+      fill(data.settings);
+      document.getElementById('settings-path').textContent = data.path;
+      say(pending(data.restart), 'good');
+    }).catch(function () {
+      say('Could not read the current settings.', 'bad');
+    });
+    dlg.showModal();
+  };
+
+  Array.prototype.forEach.call(form.querySelectorAll('[data-close]'), function (el) {
+    el.onclick = function () { dlg.close(); };
+  });
+
+  // Fills the form only: nothing changes on disk until Save, so a mistaken
+  // click here costs nothing.
+  document.getElementById('settings-reset').onclick = function () {
+    if (!defaults) return;
+    fill(defaults);
+    say('Defaults filled in. Save to keep them.', 'good');
+  };
+
+  form.onsubmit = function (e) {
+    e.preventDefault();
+    save.disabled = true;
+    say('Saving…');
+    fetch('/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collect())
+    }).then(function (r) {
+      return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+    }).then(function (res) {
+      save.disabled = false;
+      if (!res.ok) {
+        say(res.data.error || 'Those settings were not accepted.', 'bad');
+        return;
+      }
+      fill(res.data.settings);
+      var note = pending(res.data.restart);
+      say(note ? 'Saved. ' + note : 'Saved.', 'good');
+      // The drop folder may have moved, and the page behind the sheet is
+      // showing where it used to be.
+      document.getElementById('root-path').textContent = res.data.settings.dir;
+      refresh();
+    }).catch(function () {
+      save.disabled = false;
+      say('Could not reach the server.', 'bad');
+    });
+  };
+})();
 
 // The tunnel comes up in the background, so this page may have rendered before
 // the second code existed. Show a placeholder while waiting, then reload once
