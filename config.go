@@ -27,6 +27,7 @@ type Settings struct {
 	Host       string `json:"host"`
 	MaxMB      int64  `json:"max_mb"`
 	Open       bool   `json:"open"`
+	OpenHost   bool   `json:"open_host"`
 	WifiOnly   bool   `json:"wifi_only"`
 	Public     string `json:"public"`
 	PublicPort int    `json:"public_port"`
@@ -36,10 +37,11 @@ type Settings struct {
 // The defaults, shared with the flag declarations so there is one source of
 // truth for what "unconfigured" means.
 const (
-	defaultPort  = 8080
-	defaultDir   = `C:\file-drop-server`
-	defaultMaxMB = 10240
-	defaultOpen  = true
+	defaultPort     = 8080
+	defaultDir      = `C:\file-drop-server`
+	defaultMaxMB    = 10240
+	defaultOpen     = true
+	defaultOpenHost = true
 
 	settingsFile = "file-drop-server.toml"
 	qrCodeFile   = "qr-code.png"
@@ -47,10 +49,11 @@ const (
 
 func defaultSettings() Settings {
 	return Settings{
-		Port:  defaultPort,
-		Dir:   defaultDir,
-		MaxMB: defaultMaxMB,
-		Open:  defaultOpen,
+		Port:     defaultPort,
+		Dir:      defaultDir,
+		MaxMB:    defaultMaxMB,
+		Open:     defaultOpen,
+		OpenHost: defaultOpenHost,
 	}
 }
 
@@ -151,6 +154,8 @@ func (s *Settings) applyFlags() {
 			s.MaxMB = *flagMaxMB
 		case "open":
 			s.Open = *flagOpen
+		case "open-host":
+			s.OpenHost = *flagOpenHost
 		case "wifi-only":
 			s.WifiOnly = *flagWifiOnly
 		case "public":
@@ -271,6 +276,8 @@ func (s Settings) toTOML() []byte {
 		"max_mb", strconv.FormatInt(s.MaxMB, 10))
 	entry("Open each finished batch in Windows Explorer.",
 		"open", strconv.FormatBool(s.Open))
+	entry("Open the QR code page in a browser when the program starts.",
+		"open_host", strconv.FormatBool(s.OpenHost))
 	entry("Stay on the local network: publish no internet link at all.",
 		"wifi_only", strconv.FormatBool(s.WifiOnly))
 	entry("Public HTTPS address to advertise, if you run your own tunnel.\n# Empty starts a Cloudflare quick tunnel instead.",
@@ -300,6 +307,8 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignInt64(&s.MaxMB, key, value)
 		case "open":
 			err = assignBool(&s.Open, key, value)
+		case "open_host":
+			err = assignBool(&s.OpenHost, key, value)
 		case "wifi_only":
 			err = assignBool(&s.WifiOnly, key, value)
 		case "public":

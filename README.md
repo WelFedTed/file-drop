@@ -39,8 +39,11 @@ It prints a scannable QR code straight into the terminal, along with:
 | Printable QR image | `C:\file-drop-server\qr-code.png` |
 | Settings file | `file-drop-server.toml`, beside the program |
 
-Show the client `/host` on your monitor, or print `qr-code.png` and stick it on
-the wall. Both point at the same address.
+`/host` opens in your browser on its own as the server starts, so the codes are
+on screen without you typing anything — turn that off with `-open-host=false`,
+or from the settings panel, if you run this headless or as a service. Show that
+page to the client on your monitor, or print `qr-code.png` and stick it on the
+wall. Both point at the same address.
 
 ## Settings
 
@@ -52,11 +55,13 @@ There is no file until you save one, and there does not have to be: with no
 settings file the defaults below are used. Delete it at any time to go back to
 them.
 
-The drop folder and the batch limit take effect the moment you save. The
-listeners, the QR codes and the tunnel are built once at start-up, so changing
-the port, the QR address or anything about the internet link needs a restart —
-those fields are marked **restart to apply**, and the panel tells you which
-ones are waiting on one.
+The drop folder, the batch limit and the Explorer pop-up take effect the moment
+you save. The listeners, the QR codes and the tunnel are built once at start-up,
+so changing the port, the QR address or anything about the internet link needs a
+restart — those fields are marked **restart to apply**, and the panel tells you
+which ones are waiting on one. Opening this page at start-up is not marked,
+because there is nothing to re-apply: it simply describes what the next start
+does.
 
 The file is plain TOML with a comment above every key, so it can just as well be
 edited by hand:
@@ -83,6 +88,7 @@ falls back to the default.
 | `-host` | `host` | auto | Address baked into the QR code |
 | `-max` | `max_mb` | `10240` | Largest single batch, in MB (`0` = no limit) |
 | `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
+| `-open-host` | `open_host` | `true` | Open `/host` in a browser at start-up (`-open-host=false` to stop) |
 | `-wifi-only` | `wifi_only` | `false` | Stay on the LAN; publish no internet link at all |
 | `-public` | `public` | — | Advertise this HTTPS address instead of starting a tunnel |
 | `-public-port` | `public_port` | `-port` + 1 | Loopback port the internet listener uses |

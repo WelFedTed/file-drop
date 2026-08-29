@@ -45,11 +45,12 @@ var hostHTMLSrc string
 // Settings.applyFlags: the file supplies the values, a flag typed on the
 // command line overrides its own for that run only.
 var (
-	flagPort  = flag.Int("port", defaultPort, "TCP port to listen on")
-	flagDir   = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
-	flagHost  = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
-	flagMaxMB = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
-	flagOpen  = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
+	flagPort     = flag.Int("port", defaultPort, "TCP port to listen on")
+	flagDir      = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
+	flagHost     = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
+	flagMaxMB    = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
+	flagOpen     = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
+	flagOpenHost = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
 
 	flagWifiOnly   = flag.Bool("wifi-only", false, "stay on the local network: do not publish an internet link")
 	flagPublic     = flag.String("public", "", "public HTTPS address to advertise, if you run your own tunnel")
@@ -366,7 +367,12 @@ func main() {
 		fmt.Printf("  From anywhere:                 %s\n", internetURL)
 		hostMu.RUnlock()
 	}
-	fmt.Printf("  Both codes and the settings:   http://localhost:%d/host\n", cfg.Port)
+	hostURL := fmt.Sprintf("http://localhost:%d/host", cfg.Port)
+	if cfg.OpenHost {
+		fmt.Printf("  Opening in your browser:       %s\n", hostURL)
+	} else {
+		fmt.Printf("  Both codes and the settings:   %s\n", hostURL)
+	}
 	fmt.Printf("  Printable QR image:            %s\n", qrPath)
 	fmt.Printf("  Uploads land in:               %s\\<date>_<time>\\\n", root)
 	if configFound.Load() {
@@ -393,7 +399,22 @@ func main() {
 		os.Exit(0)
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	// Bind before opening the browser rather than handing the whole job to
+	// ListenAndServe: once this returns the socket is accepting, so the page
+	// cannot be asked for a moment before there is anything to answer it.
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		if tunnel != nil {
+			tunnel.Process.Kill()
+		}
+		log.Fatalf("cannot listen on port %d: %v", cfg.Port, err)
+	}
+
+	if cfg.OpenHost {
+		openBrowser(hostURL)
+	}
+
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		if tunnel != nil {
 			tunnel.Process.Kill()
 		}

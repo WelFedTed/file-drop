@@ -19,3 +19,15 @@ func openFolder(dir string) {
 	// without treating the exit code as a failure.
 	go cmd.Wait()
 }
+
+// openBrowser shows the operator's own screen at start-up, in whatever browser
+// they have set as the default. url.dll is what the shell itself uses to follow
+// a link, so it needs no console window and no quoting games with cmd /c start.
+func openBrowser(url string) {
+	cmd := exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url)
+	if err := cmd.Start(); err != nil {
+		log.Printf("could not open %s in a browser: %v", url, err)
+		return
+	}
+	go cmd.Wait()
+}

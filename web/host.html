@@ -181,9 +181,19 @@
           <span class="hint">In MB; 0 for no limit. The internet route is capped at 100 MB either way.</span>
         </label>
 
+      </fieldset>
+
+      <fieldset>
+        <legend>On this machine</legend>
+
         <label class="check">
           <input name="open" type="checkbox">
           <span>Open each finished batch in File Explorer</span>
+        </label>
+
+        <label class="check">
+          <input name="open_host" type="checkbox">
+          <span>Open this page in a browser when the program starts</span>
         </label>
       </fieldset>
 
@@ -370,6 +380,7 @@ setInterval(refresh, 3000);
     field('dir').value = s.dir || '';
     field('max_mb').value = s.max_mb;
     field('open').checked = !!s.open;
+    field('open_host').checked = !!s.open_host;
     field('port').value = s.port;
     field('host').value = s.host || '';
     field('wifi_only').checked = !!s.wifi_only;
@@ -383,6 +394,7 @@ setInterval(refresh, 3000);
       dir: field('dir').value,
       max_mb: Number(field('max_mb').value || 0),
       open: field('open').checked,
+      open_host: field('open_host').checked,
       port: Number(field('port').value || 0),
       host: field('host').value,
       wifi_only: field('wifi_only').checked,
