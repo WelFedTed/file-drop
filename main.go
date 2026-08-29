@@ -137,14 +137,24 @@ func main() {
 		internetURL string
 		internetQR  []byte
 	)
+
+	// Whether an internet link is on its way at all. Written once below, before
+	// this server starts accepting, and only read afterwards. Wi-Fi only leaves
+	// it false, and so does a listener that could not bind: in both cases there
+	// is nothing to wait for, and the page should not offer a second code.
+	tunnelPending := false
+
 	hostSnapshot := func() map[string]string {
 		hostMu.RLock()
 		defer hostMu.RUnlock()
 		data := map[string]string{"URL": publicURL, "Root": currentSettings().Dir}
-		if internetURL != "" {
+		switch {
+		case internetURL != "":
 			data["InternetURL"] = internetURL
 			data["InternetHost"] = strings.TrimPrefix(strings.SplitN(internetURL, "/?k=", 2)[0], "https://")
 			data["InternetLimit"] = humanSize(cloudflareBodyLimit)
+		case tunnelPending:
+			data["Pending"] = "yes"
 		}
 		return data
 	}
@@ -262,7 +272,6 @@ func main() {
 	// loopback: the tunnel is the sole way in, so public traffic always meets
 	// the access gate while people on the LAN carry on using the plain address.
 	var tunnel *exec.Cmd
-	tunnelPending := false
 
 	if !cfg.WifiOnly {
 		token := cfg.Token
