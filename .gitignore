@@ -1,2 +1,5 @@
 # Build output
 *.exe
+
+# Settings written by the app, beside the executable
+file-drop-server.toml
