@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,17 +23,18 @@ import (
 // to start over - the defaults below are used, and nothing is written until the
 // operator saves from the settings panel.
 type Settings struct {
-	Port       int    `json:"port"`
-	Dir        string `json:"dir"`
-	Host       string `json:"host"`
-	MaxMB      int64  `json:"max_mb"`
-	Recent     int    `json:"recent"`
-	Open       bool   `json:"open"`
-	OpenHost   bool   `json:"open_host"`
-	WifiOnly   bool   `json:"wifi_only"`
-	Public     string `json:"public"`
-	PublicPort int    `json:"public_port"`
-	Token      string `json:"token"`
+	Port         int    `json:"port"`
+	Dir          string `json:"dir"`
+	Host         string `json:"host"`
+	MaxMB        int64  `json:"max_mb"`
+	Recent       int    `json:"recent"`
+	Open         bool   `json:"open"`
+	OpenHost     bool   `json:"open_host"`
+	LanOnly      bool   `json:"lan_only"`
+	InternetOnly bool   `json:"internet_only"`
+	Public       string `json:"public"`
+	PublicPort   int    `json:"public_port"`
+	Token        string `json:"token"`
 }
 
 // The defaults, shared with the flag declarations so there is one source of
@@ -161,8 +163,10 @@ func (s *Settings) applyFlags() {
 			s.Open = *flagOpen
 		case "open-host":
 			s.OpenHost = *flagOpenHost
-		case "wifi-only":
-			s.WifiOnly = *flagWifiOnly
+		case "lan-only":
+			s.LanOnly = *flagLanOnly
+		case "internet-only":
+			s.InternetOnly = *flagInternetOnly
 		case "public":
 			s.Public = *flagPublic
 		case "public-port":
@@ -221,6 +225,11 @@ func (s *Settings) normalise() error {
 	if strings.ContainsAny(s.Token, " \t\r\n") {
 		return errors.New("the access code cannot contain spaces - it travels inside a URL")
 	}
+	// Each one turns off the route the other keeps, so together they would ask
+	// for a server nobody can reach.
+	if s.LanOnly && s.InternetOnly {
+		return errors.New("pick either local network only or internet only, not both")
+	}
 	return nil
 }
 
@@ -236,7 +245,8 @@ func restartNeeded(was, now Settings) []string {
 	}
 	add(was.Port != now.Port, "port")
 	add(was.Host != now.Host, "QR code address")
-	add(was.WifiOnly != now.WifiOnly, "internet link")
+	add(was.LanOnly != now.LanOnly, "internet link")
+	add(was.InternetOnly != now.InternetOnly, "local network link")
 	add(was.Public != now.Public, "tunnel address")
 	add(was.PublicPort != now.PublicPort, "internet port")
 	add(was.Token != now.Token, "access code")
@@ -292,7 +302,9 @@ func (s Settings) toTOML() []byte {
 	entry("Open the QR code page in a browser when the program starts.",
 		"open_host", strconv.FormatBool(s.OpenHost))
 	entry("Stay on the local network: publish no internet link at all.",
-		"wifi_only", strconv.FormatBool(s.WifiOnly))
+		"lan_only", strconv.FormatBool(s.LanOnly))
+	entry("The other way round: serve the internet route only, and refuse\n# uploads from this local network. The two cannot both be true.",
+		"internet_only", strconv.FormatBool(s.InternetOnly))
 	entry("Public HTTPS address to advertise, if you run your own tunnel.\n# Empty starts a Cloudflare quick tunnel instead.",
 		"public", tomlString(s.Public))
 	entry("Local port the internet listener uses. 0 means port + 1.",
@@ -324,8 +336,20 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignBool(&s.Open, key, value)
 		case "open_host":
 			err = assignBool(&s.OpenHost, key, value)
+		case "lan_only":
+			err = assignBool(&s.LanOnly, key, value)
 		case "wifi_only":
-			err = assignBool(&s.WifiOnly, key, value)
+			// What lan_only was called before. Honoured on the way in, because
+			// dropping it would quietly start publishing an internet link for
+			// someone whose saved answer was that they wanted none. A file
+			// carrying both keys is decided by the current one. Saving from the
+			// panel rewrites the file under the new name.
+			if _, current := values["lan_only"]; !current {
+				err = assignBool(&s.LanOnly, key, value)
+				log.Printf("note: %s still says wifi_only; that setting is now called lan_only", configPath)
+			}
+		case "internet_only":
+			err = assignBool(&s.InternetOnly, key, value)
 		case "public":
 			err = assignString(&s.Public, key, value)
 		case "public_port":

@@ -97,7 +97,8 @@ falls back to the default.
 | `-recent` | `recent` | `10` | How many of the newest drops `/host` lists (1-500) |
 | `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
 | `-open-host` | `open_host` | `true` | Open `/host` in a browser at start-up (`-open-host=false` to stop) |
-| `-wifi-only` | `wifi_only` | `false` | Stay on the LAN; publish no internet link at all |
+| `-lan-only` | `lan_only` | `false` | Stay on the LAN; publish no internet link at all |
+| `-internet-only` | `internet_only` | `false` | Serve the internet route only; refuse LAN uploads |
 | `-public` | `public` | — | Advertise this HTTPS address instead of starting a tunnel |
 | `-public-port` | `public_port` | `-port` + 1 | Loopback port the internet listener uses |
 | `-token` | `token` | random | Access code for the internet route |
@@ -156,8 +157,26 @@ through a Cloudflare quick tunnel, so a client who is nowhere near your Wi-Fi
 can still send you files. To stay purely local:
 
 ```bash
-.\builds\file-drop-server.exe -wifi-only
+.\builds\file-drop-server.exe -lan-only
 ```
+
+Or the other way round, to take the machine off its own network and serve only
+the tunnel:
+
+```bash
+.\builds\file-drop-server.exe -internet-only
+```
+
+That binds the upload page to loopback, so nothing on the local network reaches
+it and the tunnel is the only way in — every upload then meets the access code.
+`/host` still works on this machine, but there is no local code to show and no
+`qr-code.png` is written, because it would encode an address nothing answers.
+The two are mutually exclusive; asking for both is refused at start-up.
+
+> `-lan-only` was called `-wifi-only` before v0.2.0. A settings file still saying
+> `wifi_only` is honoured and noted at start-up — dropping it silently would have
+> started publishing an internet link for someone whose saved answer was that
+> they wanted none — but the flag itself is gone.
 
 The tunnel comes up in the background — the local page and uploads work
 immediately, within about a second, and the second QR code appears on `/host`
@@ -324,7 +343,7 @@ Because the tunnel is on by default, **each run publishes an upload page on the
 internet**. It is guarded — a random access code, HTTPS, a loopback-only
 listener, and only `/` and `/upload` exposed — but it is reachable by anyone
 holding the link, so treat that link as a capability. Restarting rotates the
-code and kills the old address. Use `-wifi-only` when you want none of it.
+code and kills the old address. Use `-lan-only` when you want none of it.
 
 Do not port-forward the LAN port instead; a forwarded port gives you no HTTPS,
 no access code, and exposes every route.

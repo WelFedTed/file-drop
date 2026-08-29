@@ -53,10 +53,11 @@ var (
 	flagOpen     = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
 	flagOpenHost = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
 
-	flagWifiOnly   = flag.Bool("wifi-only", false, "stay on the local network: do not publish an internet link")
-	flagPublic     = flag.String("public", "", "public HTTPS address to advertise, if you run your own tunnel")
-	flagPublicPort = flag.Int("public-port", 0, "local port the internet listener uses (defaults to -port + 1)")
-	flagToken      = flag.String("token", "", "access code for internet uploads (a random one is made when empty)")
+	flagLanOnly      = flag.Bool("lan-only", false, "stay on the local network: do not publish an internet link")
+	flagInternetOnly = flag.Bool("internet-only", false, "serve the internet route only: refuse uploads from the local network")
+	flagPublic       = flag.String("public", "", "public HTTPS address to advertise, if you run your own tunnel")
+	flagPublicPort   = flag.Int("public-port", 0, "local port the internet listener uses (defaults to -port + 1)")
+	flagToken        = flag.String("token", "", "access code for internet uploads (a random one is made when empty)")
 
 	flagConfig = flag.String("config", "", "settings file to read and save (defaults to "+settingsFile+" beside the program)")
 )
@@ -90,10 +91,17 @@ func main() {
 
 	host := cfg.Host
 	if host == "" {
-		var err error
-		host, err = lanIP()
-		if err != nil {
-			log.Fatalf("could not work out this machine's LAN address (%v) - pass one with -host", err)
+		if cfg.InternetOnly {
+			// Nothing is served to the local network, so there is no LAN
+			// address worth finding and no reason to refuse to start for the
+			// want of one.
+			host = "localhost"
+		} else {
+			var err error
+			host, err = lanIP()
+			if err != nil {
+				log.Fatalf("could not work out this machine's LAN address (%v) - pass one with -host", err)
+			}
 		}
 	}
 	publicURL := fmt.Sprintf("http://%s:%d/", host, cfg.Port)
@@ -110,6 +118,10 @@ func main() {
 	// Keep a printable copy on disk so the code can be stuck on a wall once and
 	// reused indefinitely, as long as this machine keeps the same address and port.
 	saveQRCode := func(dir string) string {
+		if cfg.InternetOnly {
+			// It would encode an address nothing on the network answers.
+			return ""
+		}
 		path := filepath.Join(dir, qrCodeFile)
 		if err := os.WriteFile(path, qrPNG, 0o644); err != nil {
 			log.Printf("warning: could not save %s: %v", path, err)
@@ -147,9 +159,9 @@ func main() {
 	)
 
 	// Whether an internet link is on its way at all. Written once below, before
-	// this server starts accepting, and only read afterwards. Wi-Fi only leaves
-	// it false, and so does a listener that could not bind: in both cases there
-	// is nothing to wait for, and the page should not offer a second code.
+	// this server starts accepting, and only read afterwards. Local network only
+	// leaves it false, and so does a listener that could not bind: in both cases
+	// there is nothing to wait for, and the page should not offer a second code.
 	tunnelPending := false
 
 	// Set when the internet route is wanted but the client for it is absent.
@@ -161,6 +173,9 @@ func main() {
 		hostMu.RLock()
 		defer hostMu.RUnlock()
 		data := map[string]string{"URL": publicURL, "Root": currentSettings().Dir}
+		if cfg.InternetOnly {
+			data["LanOff"] = "yes"
+		}
 		switch {
 		case internetURL != "":
 			data["InternetURL"] = internetURL
@@ -390,18 +405,18 @@ func main() {
 	// being discovered a moment after both have promised a second QR code.
 	// Skipped when the operator runs their own tunnel: that needs no client.
 	tunnelBin := ""
-	if !cfg.WifiOnly && cfg.Public == "" {
+	if !cfg.LanOnly && cfg.Public == "" {
 		bin, err := cloudflaredPath()
 		if err != nil {
 			noInternet = "cloudflared is not installed"
 			cloudflaredMissing = true
 			log.Printf("no internet link: %v", err)
-			log.Printf("local uploads are unaffected; use -wifi-only to stop trying")
+			log.Printf("local uploads are unaffected; use -lan-only to stop trying")
 		}
 		tunnelBin = bin
 	}
 
-	if !cfg.WifiOnly && noInternet == "" {
+	if !cfg.LanOnly && noInternet == "" {
 		token := cfg.Token
 		if token == "" {
 			token = randomToken()
@@ -453,7 +468,7 @@ func main() {
 					base, cmd, err := startTunnel(tunnelBin, publicPort)
 					if err != nil {
 						log.Printf("no internet link: %v", err)
-						log.Printf("local uploads are unaffected; use -wifi-only to stop trying")
+						log.Printf("local uploads are unaffected; use -lan-only to stop trying")
 						return
 					}
 					tunnel = cmd
@@ -476,8 +491,16 @@ func main() {
 		w.Write(png)
 	})
 
+	// Internet only binds loopback: the operator's own screen still works, but
+	// nothing on the local network can reach the upload page or /upload, and the
+	// tunnel remains the sole way in.
+	addr := fmt.Sprintf(":%d", cfg.Port)
+	if cfg.InternetOnly {
+		addr = fmt.Sprintf("127.0.0.1:%d", cfg.Port)
+	}
+
 	srv = &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Addr:              addr,
 		Handler:           logRequests(mux),
 		ReadHeaderTimeout: 20 * time.Second,
 		// No read/write timeouts on purpose: a phone on a weak signal can spend a
@@ -485,12 +508,20 @@ func main() {
 		// would leave half-written files behind.
 	}
 
-	fmt.Print("\n" + qr.ToSmallString(false) + "\n")
+	if !cfg.InternetOnly {
+		fmt.Print("\n" + qr.ToSmallString(false) + "\n")
+	} else {
+		fmt.Print("\n")
+	}
 	fmt.Printf("  File Drop is running\n\n")
-	fmt.Printf("  Send over Local Area Network:  %s\n", publicURL)
+	if cfg.InternetOnly {
+		fmt.Printf("  Send over Local Area Network:  off (internet only)\n")
+	} else {
+		fmt.Printf("  Send over Local Area Network:  %s\n", publicURL)
+	}
 	switch {
-	case cfg.WifiOnly:
-		fmt.Printf("  Send over Internet:            off (Wi-Fi only)\n")
+	case cfg.LanOnly:
+		fmt.Printf("  Send over Internet:            off (local network only)\n")
 	case noInternet != "":
 		fmt.Printf("  Send over Internet:            off (%s)\n", noInternet)
 	case tunnelPending:
@@ -506,16 +537,22 @@ func main() {
 	} else {
 		fmt.Printf("  Both codes and the settings:   %s\n", hostURL)
 	}
-	fmt.Printf("  Printable QR image:            %s\n", qrPath)
+	if qrPath != "" {
+		fmt.Printf("  Printable QR image:            %s\n", qrPath)
+	}
 	fmt.Printf("  Uploads land in:               %s\\<date>_<time>\\\n", root)
 	if configFound.Load() {
 		fmt.Printf("  Settings file:                 %s\n", configPath)
 	} else {
 		fmt.Printf("  Settings file:                 %s (defaults - not written yet)\n", configPath)
 	}
-	if !cfg.WifiOnly && noInternet == "" {
+	if !cfg.LanOnly && noInternet == "" {
 		fmt.Printf("\n  The internet address changes every restart, and Cloudflare caps\n")
-		fmt.Printf("  uploads at %s over that route. The local one is unlimited.\n", humanSize(cloudflareBodyLimit))
+		if cfg.InternetOnly {
+			fmt.Printf("  uploads at %s over that route.\n", humanSize(cloudflareBodyLimit))
+		} else {
+			fmt.Printf("  uploads at %s over that route. The local one is unlimited.\n", humanSize(cloudflareBodyLimit))
+		}
 	}
 	fmt.Printf("\n  Press Ctrl+C to stop.\n\n")
 

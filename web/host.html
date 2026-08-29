@@ -177,6 +177,10 @@
     background: var(--card); color: var(--ink);
   }
   .sheet-foot button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* Restart drops every connection in flight, including an upload in progress,
+     so it is coloured for the interruption it is. */
+  .sheet-foot button.danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+  .sheet-foot button.danger:hover { background: #b91c1c; border-color: #b91c1c; }
   .sheet-foot button:disabled { opacity: .55; cursor: default; }
   .msg { margin: 0 22px 16px; font-size: 14px; color: var(--muted); }
   .msg.bad { color: #c0392b; }
@@ -263,11 +267,24 @@
       </fieldset>
 
       <fieldset>
-        <legend>Internet link <span class="badge">restart to apply</span></legend>
+        <legend>Routes <span class="badge">restart to apply</span></legend>
+
+        <!-- One choice rather than two checkboxes: the two "only" settings
+             cancel each other out, and a control that can express an
+             impossible combination invites someone to try it. -->
+        <label class="check">
+          <input name="routes" type="radio" value="both">
+          <span>Both &mdash; local network and internet</span>
+        </label>
 
         <label class="check">
-          <input name="wifi_only" type="checkbox">
-          <span>Wi-Fi only &mdash; never publish an internet link</span>
+          <input name="routes" type="radio" value="lan">
+          <span>Local network only &mdash; never publish an internet link</span>
+        </label>
+
+        <label class="check">
+          <input name="routes" type="radio" value="internet">
+          <span>Internet only &mdash; refuse uploads from this network</span>
         </label>
 
         <label class="field mono">
@@ -296,7 +313,8 @@
 
     <div class="sheet-foot">
       <button type="button" id="settings-reset">Restore defaults</button>
-      <button type="button" id="settings-restart">Restart</button>
+      <span class="spacer"></span>
+      <button type="button" class="danger" id="settings-restart">Restart</button>
       <span class="spacer"></span>
       <button type="button" data-close>Cancel</button>
       <button type="submit" class="primary" id="settings-save">Save</button>
@@ -310,20 +328,22 @@
     <h1>Scan to send me files</h1>
     <p class="sub">Point your phone camera at a code, then pick your photos or documents.</p>
 
-    <div class="codes{{if or .InternetURL .Pending .NoCloudflared}} two{{end}}">
+    <div class="codes{{if and (not .LanOff) (or .InternetURL .Pending .NoCloudflared)}} two{{end}}">
+      {{if not .LanOff}}
       <div class="code">
         <img class="qr" src="/qr.png" alt="QR code for the local network upload page">
         <p class="label">Send over Local Area Network</p>
         <a class="url" href="{{.URL}}">{{.URL}}</a>
         <p class="note">Full speed, no size limit</p>
       </div>
+      {{end}}
 
       {{if .InternetURL}}
       <div class="code">
         <img class="qr" src="/qr-internet.png" alt="QR code for the internet upload page">
         <p class="label">Send over Internet</p>
         <a class="url small" href="{{.InternetURL}}">{{.InternetHost}}</a>
-        <p class="note">Works off-network · {{.InternetLimit}} per batch · link expires when the server restarts</p>
+        <p class="note">Works off-network · {{.InternetLimit}} limit per batch · link expires when the server restarts</p>
       </div>
       {{else if .Pending}}
       <div class="code pending" id="pending" hidden>
@@ -343,7 +363,9 @@
         <p class="label">Send over Internet</p>
         <p class="note" id="cf-note">
           This needs <strong>cloudflared</strong>, which is not installed. Until it is,
-          only the local code above works — sending from anywhere else is unavailable.
+          {{if .LanOff}}nothing can reach this machine at all: internet only is set, so
+          there is no local route either.{{else}}only the local code above works — sending
+          from anywhere else is unavailable.{{end}}
         </p>
       </div>
       {{end}}
@@ -512,6 +534,14 @@ function restartServer(say, onFail) {
 
   function field(name) { return form.elements[name]; }
 
+  function routeChoice() {
+    var picked = 'both';
+    Array.prototype.forEach.call(form.elements['routes'], function (r) {
+      if (r.checked) picked = r.value;
+    });
+    return picked;
+  }
+
   function fill(s) {
     field('dir').value = s.dir || '';
     field('max_mb').value = s.max_mb;
@@ -520,7 +550,10 @@ function restartServer(say, onFail) {
     field('open_host').checked = !!s.open_host;
     field('port').value = s.port;
     field('host').value = s.host || '';
-    field('wifi_only').checked = !!s.wifi_only;
+    var route = s.lan_only ? 'lan' : (s.internet_only ? 'internet' : 'both');
+    Array.prototype.forEach.call(form.elements['routes'], function (r) {
+      r.checked = r.value === route;
+    });
     field('token').value = s.token || '';
     field('public').value = s.public || '';
     field('public_port').value = s.public_port;
@@ -535,7 +568,8 @@ function restartServer(say, onFail) {
       open_host: field('open_host').checked,
       port: Number(field('port').value || 0),
       host: field('host').value,
-      wifi_only: field('wifi_only').checked,
+      lan_only: routeChoice() === 'lan',
+      internet_only: routeChoice() === 'internet',
       token: field('token').value,
       public: field('public').value,
       public_port: Number(field('public_port').value || 0)
