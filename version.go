@@ -19,7 +19,7 @@ const version = "0.5.0"
 
 // updateRepo is where the update check looks. Owner and name of the GitHub
 // repository these releases are published to.
-const updateRepo = "WelFedTed/file-drop-server"
+const updateRepo = "WelFedTed/file-drop"
 
 // parseVersion turns "v1.2.3" into its three numbers. Anything after the
 // patch - "1.2.3-rc1" - is ignored for ordering, so a pre-release compares

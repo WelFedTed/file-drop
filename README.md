@@ -1,4 +1,4 @@
-# File Drop Server
+# File Drop
 
 A small Go server that puts a QR code on your screen. Anyone on the same Wi-Fi
 scans it, picks files or photos on their phone, and the files land on this

@@ -1,8 +1,8 @@
-// file-drop-server serves a mobile-friendly upload page on your local network.
+// file-drop serves a mobile-friendly upload page on your local network.
 //
 // Point a phone's camera at the QR code printed on start-up (or shown at /host),
 // pick some files, hit upload, and every batch lands in its own timestamped
-// folder under the drop root, e.g. C:\file-drop-server\2026-08-29_16-54-33\
+// folder under the drop root, e.g. C:\file-drop\2026-08-29_16-54-33\
 package main
 
 import (
@@ -1049,7 +1049,7 @@ func tooBigMessage(limit int64) string {
 		humanSize(limit))
 }
 
-// newBatchDir makes C:\file-drop-server\2026-08-29_16-54-33, adding a -2, -3
+// newBatchDir makes C:\file-drop\2026-08-29_16-54-33, adding a -2, -3
 // suffix if that second is already spoken for. Colons are illegal in Windows
 // paths, so the time is separated with hyphens.
 func newBatchDir(root string) (string, error) {
