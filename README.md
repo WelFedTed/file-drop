@@ -50,6 +50,10 @@ the wall. Both point at the same address.
 | `-host` | auto | Address baked into the QR code |
 | `-max` | `10240` | Largest single batch, in MB (`0` = no limit) |
 | `-open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
+| `-tunnel` | `false` | Also publish on the internet via a Cloudflare quick tunnel |
+| `-public` | — | Advertise this HTTPS address instead of starting a tunnel |
+| `-public-port` | `-port` + 1 | Loopback port the internet listener uses |
+| `-token` | random | Access code for the internet route |
 
 ```bash
 .\file-drop-server.exe -port 9000 -dir D:\client-uploads -max 20480
@@ -78,6 +82,46 @@ forever as long as that address does not change. Two things to do once:
    ```
 
 Then print `qr-code.png` once and reuse it with every client.
+
+## Off-network clients
+
+By default the server is local-only. Add `-tunnel` and it also publishes itself
+on the internet through a Cloudflare quick tunnel, so a client who is nowhere
+near your Wi-Fi can still send you files:
+
+```bash
+.\file-drop-server.exe -tunnel
+```
+
+`/host` then shows **two** QR codes — "On my Wi-Fi" and "Anywhere else". Clients
+in the room scan the first and get full LAN speed with no size limit; remote
+clients get the second.
+
+It has to be two codes. The internet route is HTTPS, and a browser will not let
+an HTTPS page talk to `http://10.0.0.10:8080`, so a page loaded from the
+internet cannot detect the LAN and switch to it. One code cannot cover both.
+
+**Requires** cloudflared: `winget install Cloudflare.cloudflared`
+
+### What guards the internet route
+
+- It listens on **loopback only**. The tunnel is the sole way in, so public
+  traffic always meets the access gate while LAN clients are unaffected.
+- Every internet link carries a random **access code**. It rides inside the QR
+  code, so clients never type it; the first request swaps it for a cookie and
+  redirects to a clean address. Without it: `403`. Pass `-token` to fix the code
+  across restarts.
+- Uploads over the tunnel are capped at **100 MB per batch**, Cloudflare's
+  free-tier limit. The page knows which route it is on and says so up front
+  rather than letting someone checksum 2 GB that cannot get through. The local
+  route stays uncapped.
+- The tunnel is tied to the server's lifetime by a Windows job object, so it
+  cannot be orphaned — killing the server from Task Manager takes it down too.
+
+The address changes every restart, so print only the LAN code. If you want a
+stable public address, run your own tunnel and point the server at it with
+`-public https://your-domain/` (it will expose the gated listener on
+`-public-port`, which defaults to `-port` + 1).
 
 ## Folders
 
@@ -166,7 +210,13 @@ and nothing pops up.
 
 ## Security
 
-There is no password. Anyone who can reach this machine on the network can
-upload to it, and the traffic is plain HTTP. That is the right trade-off on a
-home or office LAN with a client sitting in front of you; do not port-forward it
-to the open internet.
+On the LAN there is no password: anyone who can reach this machine can upload to
+it, over plain HTTP. That is the right trade-off on a home or office network
+with a client sitting in front of you.
+
+Do not port-forward the LAN port to the internet. Use `-tunnel` instead — it
+gives you HTTPS, an access code, and a loopback-only listener, none of which you
+get from a forwarded port.
+
+Even so, treat the internet link as a capability: anyone holding it can upload
+until you restart. Restarting rotates the code and kills the old address.

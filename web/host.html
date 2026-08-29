@@ -30,16 +30,22 @@
   .hero { text-align: center; }
   h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.01em; }
   .sub { margin: 0; color: var(--muted); }
+  .codes { margin-top: 22px; display: grid; gap: 28px; justify-items: center; }
+  @media (min-width: 620px) { .codes.two { grid-template-columns: 1fr 1fr; align-items: start; } }
+  .code { max-width: 320px; }
   .qr {
-    width: 320px; max-width: 100%; height: auto; margin: 22px auto 16px;
+    width: 320px; max-width: 100%; height: auto; margin: 0 auto 14px;
     display: block; background: #fff; padding: 14px; border-radius: 16px;
     border: 1px solid var(--line);
   }
+  .label { margin: 0 0 6px; font-size: 15px; font-weight: 650; }
   .url {
-    display: inline-block;
+    display: inline-block; max-width: 100%;
     font: 600 18px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color: var(--accent); text-decoration: none;
+    color: var(--accent); text-decoration: none; word-break: break-all;
   }
+  .url.small { font-size: 14px; }
+  .note { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
@@ -56,9 +62,25 @@
 
   <section class="card hero">
     <h1>Scan to send me files</h1>
-    <p class="sub">Point your phone camera at the code, then pick your photos or documents.</p>
-    <img class="qr" src="/qr.png" alt="QR code linking to the upload page">
-    <a class="url" href="{{.URL}}">{{.URL}}</a>
+    <p class="sub">Point your phone camera at a code, then pick your photos or documents.</p>
+
+    <div class="codes{{if .InternetURL}} two{{end}}">
+      <div class="code">
+        <img class="qr" src="/qr.png" alt="QR code for the local network upload page">
+        <p class="label">On my Wi-Fi</p>
+        <a class="url" href="{{.URL}}">{{.URL}}</a>
+        <p class="note">Full speed, no size limit</p>
+      </div>
+
+      {{if .InternetURL}}
+      <div class="code">
+        <img class="qr" src="/qr-internet.png" alt="QR code for the internet upload page">
+        <p class="label">Anywhere else</p>
+        <a class="url small" href="{{.InternetURL}}">{{.InternetHost}}</a>
+        <p class="note">Works off-network · {{.InternetLimit}} per batch · link expires when the server restarts</p>
+      </div>
+      {{end}}
+    </div>
   </section>
 
   <section class="card">

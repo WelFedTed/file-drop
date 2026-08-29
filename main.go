@@ -6,6 +6,10 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,7 +21,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -40,7 +47,19 @@ var (
 	flagHost  = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
 	flagMaxMB = flag.Int64("max", 10240, "maximum size of a single upload batch in MB (0 for no limit)")
 	flagOpen  = flag.Bool("open", true, "open each finished batch in Windows Explorer")
+
+	flagTunnel     = flag.Bool("tunnel", false, "also publish the page on the internet with a Cloudflare quick tunnel")
+	flagPublic     = flag.String("public", "", "public HTTPS address to advertise, if you run your own tunnel")
+	flagPublicPort = flag.Int("public-port", 0, "local port the internet listener uses (defaults to -port + 1)")
+	flagToken      = flag.String("token", "", "access code for internet uploads (a random one is made when empty)")
 )
+
+// Cloudflare's free tier refuses request bodies over 100 MB, so uploads that
+// come in over the tunnel are held to that whatever -max says.
+const cloudflareBodyLimit = 100 << 20
+
+// maxBytesKey carries the per-route upload ceiling on the request context.
+type maxBytesKey struct{}
 
 // batchMu serialises batch-folder creation so two phones uploading in the same
 // second cannot land in the same directory.
@@ -48,6 +67,7 @@ var batchMu sync.Mutex
 
 func main() {
 	useUTF8Console()
+	adoptChildProcesses()
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 
@@ -98,10 +118,13 @@ func main() {
 		w.Write(indexHTML)
 	})
 
+	// Filled in below if the internet route is switched on.
+	hostData := map[string]string{"URL": publicURL, "Root": root}
+
 	mux.HandleFunc("/host", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		hostTmpl.Execute(w, map[string]string{"URL": publicURL, "Root": root})
+		hostTmpl.Execute(w, hostData)
 	})
 
 	mux.HandleFunc("/qr.png", func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +140,66 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(root, 15)})
 	})
 
+	// The internet route, when asked for. It listens only on loopback: the
+	// tunnel is the sole way in, so public traffic always meets the access
+	// gate while people on the LAN carry on using the plain address.
+	var (
+		internetURL string
+		tunnel      *exec.Cmd
+		internetQR  []byte
+	)
+	if *flagTunnel || *flagPublic != "" {
+		token := *flagToken
+		if token == "" {
+			token = randomToken()
+		}
+
+		publicPort := *flagPublicPort
+		if publicPort == 0 {
+			publicPort = *flagPort + 1
+		}
+		gated := &http.Server{
+			Handler:           publicGate(token, logRequests(mux)),
+			ReadHeaderTimeout: 20 * time.Second,
+		}
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", publicPort))
+		if err != nil {
+			log.Fatalf("cannot open the internet listener on port %d: %v", publicPort, err)
+		}
+		go func() {
+			if err := gated.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("internet listener stopped: %v", err)
+			}
+		}()
+
+		base := strings.TrimRight(*flagPublic, "/")
+		if base == "" {
+			log.Printf("starting the Cloudflare tunnel...")
+			base, tunnel, err = startTunnel(publicPort)
+			if err != nil {
+				log.Fatalf("could not start the tunnel: %v", err)
+			}
+		}
+		internetURL = base + "/?k=" + token
+
+		if code, err := qrcode.New(internetURL, qrcode.Medium); err == nil {
+			internetQR, _ = code.PNG(512)
+		}
+
+		hostData["InternetURL"] = internetURL
+		hostData["InternetHost"] = strings.TrimPrefix(base, "https://")
+		hostData["InternetLimit"] = humanSize(cloudflareBodyLimit)
+	}
+
+	mux.HandleFunc("/qr-internet.png", func(w http.ResponseWriter, r *http.Request) {
+		if internetQR == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(internetQR)
+	})
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", *flagPort),
 		Handler:           logRequests(mux),
@@ -128,13 +211,36 @@ func main() {
 
 	fmt.Print("\n" + qr.ToSmallString(false) + "\n")
 	fmt.Printf("  File Drop is running\n\n")
-	fmt.Printf("  Scan the code above, or open   %s\n", publicURL)
-	fmt.Printf("  Big QR code for a screen:      http://localhost:%d/host\n", *flagPort)
+	fmt.Printf("  On this network:               %s\n", publicURL)
+	if internetURL != "" {
+		fmt.Printf("  From anywhere:                 %s\n", internetURL)
+	}
+	fmt.Printf("  Both codes on one screen:      http://localhost:%d/host\n", *flagPort)
 	fmt.Printf("  Printable QR image:            %s\n", qrPath)
-	fmt.Printf("  Uploads land in:               %s\\<date>_<time>\\\n\n", root)
-	fmt.Printf("  Press Ctrl+C to stop.\n\n")
+	fmt.Printf("  Uploads land in:               %s\\<date>_<time>\\\n", root)
+	if internetURL != "" {
+		fmt.Printf("\n  The internet address changes every restart, and Cloudflare caps\n")
+		fmt.Printf("  uploads at %s over that route. The local one is unlimited.\n", humanSize(cloudflareBodyLimit))
+	}
+	fmt.Printf("\n  Press Ctrl+C to stop.\n\n")
+
+	// Stop the tunnel with us, rather than leaving cloudflared running.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	go func() {
+		<-stop
+		if tunnel != nil {
+			log.Printf("closing the tunnel")
+			tunnel.Process.Kill()
+		}
+		srv.Close()
+		os.Exit(0)
+	}()
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if tunnel != nil {
+			tunnel.Process.Kill()
+		}
 		log.Fatalf("server stopped: %v", err)
 	}
 }
@@ -146,8 +252,15 @@ func handleUpload(w http.ResponseWriter, r *http.Request, root string) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	if *flagMaxMB > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, *flagMaxMB*1024*1024)
+	limit := *flagMaxMB * 1024 * 1024
+	if routeLimit, ok := r.Context().Value(maxBytesKey{}).(int64); ok {
+		// The internet route has a ceiling of its own; take the tighter of the two.
+		if limit == 0 || routeLimit < limit {
+			limit = routeLimit
+		}
+	}
+	if limit > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 
 	mr, err := r.MultipartReader()
@@ -174,7 +287,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, root string) {
 		if err != nil {
 			discardBatch(dir)
 			if isTooBig(err) {
-				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": tooBigMessage()})
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": tooBigMessage(limit)})
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "the upload was interrupted: " + err.Error()})
@@ -252,7 +365,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, root string) {
 			discardBatch(dir)
 			if isTooBig(copyErr) {
 				log.Printf("rejected: batch over the %d MB limit", *flagMaxMB)
-				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": tooBigMessage()})
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": tooBigMessage(limit)})
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "the upload was cut short - please try again"})
@@ -318,6 +431,97 @@ func handleUpload(w http.ResponseWriter, r *http.Request, root string) {
 	})
 }
 
+// randomToken makes the access code that guards the internet route.
+func randomToken() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("could not generate an access code: %v", err)
+	}
+	return hex.EncodeToString(b)
+}
+
+// publicGate fronts the internet-facing listener. The code travels in the QR
+// code, so a client never types it: the first request carries ?k=, which is
+// swapped for a cookie and redirected away so the address bar stays clean.
+func publicGate(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fromQuery := r.URL.Query().Get("k") == token
+		cookie, _ := r.Cookie("filedrop")
+		fromCookie := cookie != nil && cookie.Value == token
+
+		if !fromQuery && !fromCookie {
+			log.Printf("internet request without a valid code: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "This link is not valid. Ask for a fresh one.", http.StatusForbidden)
+			return
+		}
+
+		if fromQuery {
+			http.SetCookie(w, &http.Cookie{
+				Name: "filedrop", Value: token, Path: "/",
+				HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			})
+			// Drop the code from the address bar on the initial page load.
+			if r.Method == http.MethodGet && r.URL.Path == "/" {
+				http.Redirect(w, r, "/", http.StatusFound)
+				return
+			}
+		}
+
+		ctx := context.WithValue(r.Context(), maxBytesKey{}, int64(cloudflareBodyLimit))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+var tunnelURLPattern = regexp.MustCompile(`https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com`)
+
+// startTunnel runs cloudflared against the internet listener and waits for it
+// to report the public address it was given.
+func startTunnel(port int) (string, *exec.Cmd, error) {
+	bin, err := exec.LookPath("cloudflared")
+	if err != nil {
+		return "", nil, errors.New("cloudflared is not installed - run: winget install Cloudflare.cloudflared")
+	}
+
+	cmd := exec.Command(bin, "tunnel", "--no-autoupdate", "--url",
+		fmt.Sprintf("http://127.0.0.1:%d", port))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", nil, err
+	}
+
+	// cloudflared announces the address on stderr, but watch both streams so a
+	// change of behaviour between versions does not leave us hanging.
+	found := make(chan string, 1)
+	watch := func(r io.Reader) {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			if match := tunnelURLPattern.FindString(scanner.Text()); match != "" {
+				select {
+				case found <- match:
+				default:
+				}
+			}
+		}
+	}
+	go watch(stdout)
+	go watch(stderr)
+
+	select {
+	case url := <-found:
+		return url, cmd, nil
+	case <-time.After(60 * time.Second):
+		cmd.Process.Kill()
+		return "", nil, errors.New("cloudflared did not report a public address within a minute")
+	}
+}
+
 // sfvName is the checksum manifest dropped into every batch folder.
 const sfvName = "checksums.sfv"
 
@@ -361,8 +565,9 @@ func isTooBig(err error) bool {
 	return errors.As(err, &maxErr)
 }
 
-func tooBigMessage() string {
-	return fmt.Sprintf("that batch is over the %d MB limit - try sending it in a few smaller goes", *flagMaxMB)
+func tooBigMessage(limit int64) string {
+	return fmt.Sprintf("that batch is over the %s limit for this connection - try sending it in a few smaller goes",
+		humanSize(limit))
 }
 
 // newBatchDir makes C:\file-drop-server\2026-08-29_16-54-33, adding a -2, -3

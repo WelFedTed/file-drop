@@ -205,7 +205,7 @@
     <button class="btn btn-primary" id="retry" style="margin-top:18px">Try again</button>
   </section>
 
-  <footer>Files are sent over your local network only.</footer>
+  <footer id="footnote">Files are sent over your local network only.</footer>
 </div>
 
 <script>
@@ -417,6 +417,14 @@
     inputAny.value = '';   // let the same file be picked again after removal
   });
 
+  // Served over HTTPS means this page came in through the internet tunnel
+  // rather than the local network, which carries a batch size limit.
+  var viaInternet = location.protocol === 'https:';
+  var INTERNET_LIMIT = 100 * 1024 * 1024;
+  el('footnote').textContent = viaInternet
+    ? 'Sent over an encrypted connection · up to 100 MB per batch'
+    : 'Files are sent over your local network only.';
+
   // Folders cannot come from the file dialog - no browser offers one dialog
   // that returns both - so they arrive by being dragged onto the page, mixed
   // freely with loose files in the same drop.
@@ -467,6 +475,13 @@
     if (!queue.length) return;
 
     var bytes = queue.reduce(function (sum, e) { return sum + e.file.size; }, 0);
+
+    // Say so now rather than after checksumming gigabytes the link cannot carry.
+    if (viaInternet && bytes > INTERNET_LIMIT) {
+      fail('This link accepts up to 100 MB at a time and you have ' + fmt(bytes)
+         + ' selected. Remove a few files and send the rest in a second batch.');
+      return;
+    }
 
     show(sendingStep);
     el('barFill').style.width = '0%';
