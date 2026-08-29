@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File Drop — scan to send</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --ink: #16181d; --muted: #6b7280;
+    --line: #e3e5ea; --accent: #2563eb;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 12px 32px rgba(16,24,40,.07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #171a21; --ink: #eceef2; --muted: #9aa2b1;
+      --line: #272b34; --accent: #4f83f1;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 20px; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 20px; box-shadow: var(--shadow); padding: 28px;
+  }
+  .hero { text-align: center; }
+  h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.01em; }
+  .sub { margin: 0; color: var(--muted); }
+  .qr {
+    width: 320px; max-width: 100%; height: auto; margin: 22px auto 16px;
+    display: block; background: #fff; padding: 14px; border-radius: 16px;
+    border: 1px solid var(--line);
+  }
+  .url {
+    display: inline-block;
+    font: 600 18px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--accent); text-decoration: none;
+  }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  td.folder { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+  tr:last-child td { border-bottom: 0; }
+  .empty { color: var(--muted); font-size: 15px; margin: 0; }
+  .path { color: var(--muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <section class="card hero">
+    <h1>Scan to send me files</h1>
+    <p class="sub">Point your phone camera at the code, then pick your photos or documents.</p>
+    <img class="qr" src="/qr.png" alt="QR code linking to the upload page">
+    <a class="url" href="{{.URL}}">{{.URL}}</a>
+  </section>
+
+  <section class="card">
+    <h2>Recent drops</h2>
+    <div id="recent"><p class="empty">Nothing yet — uploads will appear here.</p></div>
+    <p class="path" style="margin-top:18px">Saving to {{.Root}}</p>
+  </section>
+
+</div>
+
+<script>
+function fmt(n) {
+  if (n < 1024) return n + ' B';
+  var u = ['KB', 'MB', 'GB', 'TB'], i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return (n >= 10 ? n.toFixed(0) : n.toFixed(1)) + ' ' + u[i];
+}
+
+function refresh() {
+  fetch('/batches').then(function (r) { return r.json(); }).then(function (data) {
+    var box = document.getElementById('recent');
+    var rows = (data.batches || []).filter(function (b) { return b.files > 0; });
+    if (!rows.length) {
+      box.innerHTML = '<p class="empty">Nothing yet — uploads will appear here.</p>';
+      return;
+    }
+    var html = '<table><tr><th>Folder</th><th class="num">Files</th><th class="num">Size</th></tr>';
+    rows.forEach(function (b) {
+      html += '<tr><td class="folder">' + b.folder.replace(/[<&]/g, '') + '</td>'
+            + '<td class="num">' + b.files + '</td>'
+            + '<td class="num">' + fmt(b.bytes) + '</td></tr>';
+    });
+    box.innerHTML = html + '</table>';
+  }).catch(function () { /* server restarting; the next poll will pick it up */ });
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

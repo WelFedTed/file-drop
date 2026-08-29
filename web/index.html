@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Send files</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --ink: #16181d;
+    --muted: #6b7280;
+    --line: #e3e5ea;
+    --accent: #2563eb;
+    --accent-ink: #ffffff;
+    --ok: #128a4d;
+    --bad: #c02626;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 12px 32px rgba(16,24,40,.07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --card: #171a21;
+      --ink: #eceef2;
+      --muted: #9aa2b1;
+      --line: #272b34;
+      --accent: #4f83f1;
+      --accent-ink: #0b1220;
+      --ok: #35c07d;
+      --bad: #ef6b6b;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .app { width: 100%; max-width: 520px; }
+
+  header { text-align: center; margin-bottom: 20px; }
+  .mark {
+    width: 46px; height: 46px; margin: 0 auto 12px;
+    display: grid; place-items: center;
+    border-radius: 14px;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  h1 { font-size: 22px; line-height: 1.25; margin: 0 0 4px; letter-spacing: -.01em; }
+  .sub { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 18px;
+  }
+
+  .drop {
+    border: 2px dashed var(--line);
+    border-radius: 14px;
+    padding: 28px 18px;
+    text-align: center;
+    transition: border-color .15s, background .15s;
+  }
+  .drop.hot { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  .drop p { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+
+  .btn {
+    -webkit-appearance: none; appearance: none;
+    border: 0; border-radius: 12px;
+    font: inherit; font-weight: 600;
+    padding: 14px 18px;
+    width: 100%;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); }
+  .btn-primary:disabled { opacity: .5; cursor: default; transform: none; }
+  .btn-quiet {
+    background: transparent; color: var(--ink);
+    border: 1px solid var(--line);
+  }
+
+  .pick { margin-top: 14px; }
+
+  ul.files { list-style: none; margin: 16px 0 0; padding: 0; }
+  ul.files li {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--line);
+  }
+  .thumb {
+    width: 40px; height: 40px; flex: none;
+    border-radius: 9px;
+    background: var(--bg);
+    display: grid; place-items: center;
+    overflow: hidden;
+    font-size: 11px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .meta { min-width: 0; flex: 1; }
+  .name { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .size { display: block; font-size: 13px; color: var(--muted); }
+  .remove {
+    border: 0; background: transparent; color: var(--muted);
+    font-size: 22px; line-height: 1; padding: 6px 4px; cursor: pointer; border-radius: 8px;
+  }
+
+  ul.files li.more {
+    display: block; text-align: center;
+    font-size: 14px; color: var(--muted); padding: 12px 0 4px;
+  }
+
+  .total { margin: 14px 0 0; font-size: 14px; color: var(--muted); text-align: center; }
+  .send { margin-top: 14px; }
+
+  .bar { height: 10px; background: var(--bg); border-radius: 999px; overflow: hidden; margin: 18px 0 10px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .2s; }
+
+  .center { text-align: center; }
+  .big { font-size: 20px; font-weight: 650; margin: 14px 0 4px; }
+  .folder {
+    display: inline-block; margin-top: 10px;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--muted);
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px;
+    word-break: break-all;
+  }
+  .tick { width: 56px; height: 56px; margin: 4px auto 0; display: block; color: var(--ok); }
+  .warn { color: var(--bad); }
+
+  footer { margin-top: 18px; text-align: center; font-size: 13px; color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="mark" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+      </svg>
+    </div>
+    <h1>Send me your files</h1>
+    <p class="sub">Pick photos, videos or documents. They go straight to my computer.</p>
+  </header>
+
+  <!-- Step 1: choose and review -->
+  <section class="card" id="pickStep">
+    <div class="drop" id="drop">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted)">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v12"/>
+      </svg>
+      <p id="dropHint">Tap the button below to choose files</p>
+    </div>
+
+    <button class="btn btn-quiet pick" type="button" id="pickFiles">Choose files</button>
+
+    <input id="inputAny" type="file" multiple hidden>
+
+    <ul class="files" id="list"></ul>
+    <p class="total" id="total" hidden></p>
+
+    <button class="btn btn-primary send" id="send" disabled>Upload</button>
+  </section>
+
+  <!-- Step 2: uploading -->
+  <section class="card center" id="sendingStep" hidden>
+    <p class="big" id="sendingTitle">Uploading…</p>
+    <div class="bar"><i id="barFill"></i></div>
+    <p class="sub" id="sendingDetail">Starting…</p>
+    <p class="sub" style="margin-top:10px">Keep this page open until it finishes.</p>
+  </section>
+
+  <!-- Step 3: done -->
+  <section class="card center" id="doneStep" hidden>
+    <svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/>
+    </svg>
+    <p class="big" id="doneTitle">Sent</p>
+    <p class="sub" id="doneDetail"></p>
+    <span class="folder" id="doneFolder"></span>
+    <button class="btn btn-quiet" id="again" style="margin-top:18px">Send more files</button>
+  </section>
+
+  <!-- Error -->
+  <section class="card center" id="errStep" hidden>
+    <p class="big warn">That didn’t go through</p>
+    <p class="sub" id="errDetail"></p>
+    <button class="btn btn-primary" id="retry" style="margin-top:18px">Try again</button>
+  </section>
+
+  <footer>Files are sent over your local network only.</footer>
+</div>
+
+<script>
+(function () {
+  var queue = [];
+
+  var el = function (id) { return document.getElementById(id); };
+  var pickStep = el('pickStep'), sendingStep = el('sendingStep'), doneStep = el('doneStep'), errStep = el('errStep');
+  var list = el('list'), total = el('total'), send = el('send'), drop = el('drop'), dropHint = el('dropHint');
+  var inputAny = el('inputAny');
+
+  // CRC-32 (IEEE, the one zip and 7-Zip report). Not a security hash - it is
+  // here to catch a file that arrived scrambled, and it is quick enough to run
+  // on a phone before the upload starts.
+  var crcTable = (function () {
+    var table = new Int32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c;
+    }
+    return table;
+  })();
+
+  function crcChunk(crc, bytes) {
+    for (var i = 0; i < bytes.length; i++) {
+      crc = crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return crc;
+  }
+
+  function readChunk(blob) {
+    if (blob.arrayBuffer) return blob.arrayBuffer();
+    return new Promise(function (resolve, reject) {          // older Safari
+      var fr = new FileReader();
+      fr.onload = function () { resolve(fr.result); };
+      fr.onerror = function () { reject(fr.error); };
+      fr.readAsArrayBuffer(blob);
+    });
+  }
+
+  // Walks the file in slices so a 4 GB video never has to sit in memory.
+  function crc32(file, onProgress) {
+    var CHUNK = 4 * 1024 * 1024;
+    var crc = -1, offset = 0;
+
+    function step() {
+      if (offset >= file.size) {
+        return Promise.resolve(((crc ^ -1) >>> 0).toString(16).padStart(8, '0'));
+      }
+      var end = Math.min(offset + CHUNK, file.size);
+      return readChunk(file.slice(offset, end)).then(function (buf) {
+        crc = crcChunk(crc, new Uint8Array(buf));
+        offset = end;
+        if (onProgress) onProgress(offset);
+        return step();
+      });
+    }
+    return step();
+  }
+
+  function fmt(n) {
+    if (n < 1024) return n + ' B';
+    var u = ['KB', 'MB', 'GB', 'TB'], i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+    return (n >= 10 ? n.toFixed(0) : n.toFixed(1)) + ' ' + u[i];
+  }
+
+  function show(step) {
+    [pickStep, sendingStep, doneStep, errStep].forEach(function (s) { s.hidden = s !== step; });
+    window.scrollTo(0, 0);
+  }
+
+  // Each entry is { file, path }. path is where the file sat inside the folder
+  // the client picked ("holiday/day one/IMG_01.jpg"), or just its name for a
+  // loose file - the server rebuilds that structure inside the batch folder.
+  function add(files, paths) {
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var path = (paths && paths[i]) || f.webkitRelativePath || f.name;
+      var dupe = queue.some(function (q) {
+        return q.path === path && q.file.size === f.size && q.file.lastModified === f.lastModified;
+      });
+      if (!dupe) queue.push({ file: f, path: path });
+    }
+    render();
+  }
+
+  // Drag-and-drop hands over directory entries rather than files, so walk them.
+  function walkEntry(entry, prefix, out) {
+    if (entry.isFile) {
+      return new Promise(function (resolve) {
+        entry.file(function (f) {
+          out.push({ file: f, path: prefix + f.name });
+          resolve();
+        }, function () { resolve(); });   // unreadable file: skip it
+      });
+    }
+    if (!entry.isDirectory) return Promise.resolve();
+
+    var reader = entry.createReader();
+    var dir = prefix + entry.name + '/';
+    return new Promise(function (resolve) {
+      var batchOfEntries = [];
+      // readEntries returns at most 100 at a time, so keep asking until empty.
+      function readMore() {
+        reader.readEntries(function (entries) {
+          if (!entries.length) {
+            var chain = Promise.resolve();
+            batchOfEntries.forEach(function (child) {
+              chain = chain.then(function () { return walkEntry(child, dir, out); });
+            });
+            chain.then(resolve);
+            return;
+          }
+          batchOfEntries = batchOfEntries.concat(Array.prototype.slice.call(entries));
+          readMore();
+        }, function () { resolve(); });
+      }
+      readMore();
+    });
+  }
+
+  function render() {
+    list.innerHTML = '';
+    var bytes = 0;
+    queue.forEach(function (e) { bytes += e.file.size; });
+
+    // A picked folder can hold thousands of files; drawing every row would
+    // lock up the phone for no benefit.
+    var SHOWN = 60;
+    var visible = queue.slice(0, SHOWN);
+
+    visible.forEach(function (entry, index) {
+      var f = entry.file;
+
+      var li = document.createElement('li');
+
+      var thumb = document.createElement('div');
+      thumb.className = 'thumb';
+      if (/^image\//.test(f.type)) {
+        var img = document.createElement('img');
+        img.alt = '';
+        img.src = URL.createObjectURL(f);
+        img.onload = function () { URL.revokeObjectURL(img.src); };
+        thumb.appendChild(img);
+      } else {
+        var dot = f.name.lastIndexOf('.');
+        thumb.textContent = dot > -1 ? f.name.slice(dot + 1).slice(0, 4) : 'file';
+      }
+
+      var meta = document.createElement('div');
+      meta.className = 'meta';
+      var name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = f.name;
+      var size = document.createElement('span');
+      size.className = 'size';
+      // Show where the file sat in the picked folder, so two IMG_01.jpg from
+      // different subfolders are told apart.
+      var folder = entry.path.slice(0, entry.path.length - f.name.length).replace(/\/$/, '');
+      size.textContent = folder ? folder + ' · ' + fmt(f.size) : fmt(f.size);
+      meta.appendChild(name);
+      meta.appendChild(size);
+
+      var rm = document.createElement('button');
+      rm.className = 'remove';
+      rm.type = 'button';
+      rm.innerHTML = '&times;';
+      rm.setAttribute('aria-label', 'Remove ' + f.name);
+      rm.onclick = function () { queue.splice(index, 1); render(); };
+
+      li.appendChild(thumb);
+      li.appendChild(meta);
+      li.appendChild(rm);
+      list.appendChild(li);
+    });
+
+    if (queue.length > SHOWN) {
+      var more = document.createElement('li');
+      more.className = 'more';
+      more.textContent = '+ ' + (queue.length - SHOWN) + ' more file'
+        + (queue.length - SHOWN === 1 ? '' : 's') + ' queued';
+      list.appendChild(more);
+    }
+
+    var n = queue.length;
+    send.disabled = n === 0;
+    send.textContent = n === 0 ? 'Upload' : 'Upload ' + n + ' file' + (n === 1 ? '' : 's') + ' · ' + fmt(bytes);
+    total.hidden = n === 0;
+
+    var folders = {};
+    queue.forEach(function (e) {
+      var cut = e.path.indexOf('/');
+      if (cut > 0) folders[e.path.slice(0, cut)] = true;
+    });
+    var folderCount = Object.keys(folders).length;
+    total.textContent = n + ' file' + (n === 1 ? '' : 's')
+      + (folderCount ? ' from ' + folderCount + ' folder' + (folderCount === 1 ? '' : 's') : '')
+      + ' ready, ' + fmt(bytes) + ' in total';
+
+    dropHint.textContent = n === 0 ? pickHint : 'Add more, or upload what you have';
+  }
+
+  el('pickFiles').onclick = function () { inputAny.click(); };
+
+  inputAny.addEventListener('change', function () {
+    add(inputAny.files);
+    inputAny.value = '';   // let the same file be picked again after removal
+  });
+
+  // Folders cannot come from the file dialog - no browser offers one dialog
+  // that returns both - so they arrive by being dragged onto the page, mixed
+  // freely with loose files in the same drop.
+  var isDesktop = window.matchMedia
+    && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  var pickHint = isDesktop
+    ? 'Choose files below, or drag files and folders here'
+    : 'Tap the button below to choose files';
+
+  // Drag and drop, for anyone opening this on a laptop.
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('hot'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('hot'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    if (!e.dataTransfer) return;
+
+    // Dropped folders only come through the entries API; fall back to the plain
+    // file list when the browser does not offer it.
+    var items = e.dataTransfer.items;
+    var entries = [];
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      for (var i = 0; i < items.length; i++) {
+        var entry = items[i].webkitGetAsEntry();
+        if (entry) entries.push(entry);
+      }
+    }
+    if (!entries.length) {
+      if (e.dataTransfer.files.length) add(e.dataTransfer.files);
+      return;
+    }
+
+    var found = [];
+    var chain = Promise.resolve();
+    entries.forEach(function (entry) {
+      chain = chain.then(function () { return walkEntry(entry, '', found); });
+    });
+    chain.then(function () {
+      add(found.map(function (x) { return x.file; }), found.map(function (x) { return x.path; }));
+    });
+  });
+  window.addEventListener('dragover', function (e) { e.preventDefault(); });
+  window.addEventListener('drop', function (e) { e.preventDefault(); });
+
+  send.onclick = function () {
+    if (!queue.length) return;
+
+    var bytes = queue.reduce(function (sum, e) { return sum + e.file.size; }, 0);
+
+    show(sendingStep);
+    el('barFill').style.width = '0%';
+    el('sendingTitle').textContent = 'Checking ' + queue.length + ' file' + (queue.length === 1 ? '' : 's') + '…';
+    el('sendingDetail').textContent = 'Making sure everything arrives intact…';
+
+    // Fingerprint every file first, then upload the CRC alongside each one so
+    // the computer can prove it received exactly what left this device.
+    var hashed = 0;
+    var chain = Promise.resolve(new FormData());
+
+    queue.forEach(function (entry) {
+      chain = chain.then(function (body) {
+        return crc32(entry.file, function (done) {
+          var pct = Math.round((hashed + done) / bytes * 100);
+          el('barFill').style.width = pct + '%';
+          el('sendingDetail').textContent = 'Checking ' + entry.file.name;
+        }).then(function (crc) {
+          hashed += entry.file.size;
+          // Both fields must precede their file. The path travels in its own
+          // field because a multipart filename cannot carry directories.
+          body.append('path', entry.path);
+          body.append('crc', crc);
+          body.append('files', entry.file, entry.file.name);
+          return body;
+        });
+      });
+    });
+
+    chain.then(function (body) { upload(body, bytes); }, function () {
+      fail('Could not read those files from this device. Try picking them again.');
+    });
+  };
+
+  function upload(body, bytes) {
+    el('barFill').style.width = '0%';
+    el('sendingTitle').textContent = 'Uploading ' + queue.length + ' file' + (queue.length === 1 ? '' : 's') + '…';
+    el('sendingDetail').textContent = 'Starting…';
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/upload');
+
+    xhr.upload.onprogress = function (e) {
+      if (!e.lengthComputable) return;
+      var pct = Math.round(e.loaded / e.total * 100);
+      el('barFill').style.width = pct + '%';
+      el('sendingDetail').textContent = pct + '%  ·  ' + fmt(e.loaded) + ' of ' + fmt(e.total);
+    };
+    xhr.upload.onload = function () {
+      el('barFill').style.width = '100%';
+      el('sendingDetail').textContent = 'Finishing up…';
+    };
+
+    xhr.onload = function () {
+      var res = {};
+      try { res = JSON.parse(xhr.responseText); } catch (err) { /* fall through to the generic message */ }
+      if (xhr.status === 200 && res.ok) {
+        el('doneTitle').textContent = res.count + ' file' + (res.count === 1 ? '' : 's') + ' delivered';
+        el('doneDetail').textContent = res.verified === res.count
+          ? fmt(bytes) + ' received and checked. Thank you!'
+          : fmt(bytes) + ' received. Thank you!';
+        el('doneFolder').textContent = res.folder;
+        queue = [];
+        render();
+        show(doneStep);
+      } else {
+        fail(res.error || 'The computer replied with an error (' + xhr.status + ').');
+      }
+    };
+    xhr.onerror = function () { fail('Lost the connection. Check you are still on the same Wi-Fi and try again.'); };
+    xhr.onabort = function () { fail('The upload was cancelled.'); };
+
+    xhr.send(body);
+  }
+
+  function fail(message) {
+    el('errDetail').textContent = message;
+    show(errStep);
+  }
+
+  el('again').onclick = function () { show(pickStep); };
+  el('retry').onclick = function () { show(pickStep); };
+
+  render();
+})();
+</script>
+</body>
+</html>
