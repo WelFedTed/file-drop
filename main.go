@@ -410,17 +410,17 @@ func main() {
 
 	fmt.Print("\n" + qr.ToSmallString(false) + "\n")
 	fmt.Printf("  File Drop is running\n\n")
-	fmt.Printf("  On this network:               %s\n", publicURL)
+	fmt.Printf("  Send over Local Area Network:  %s\n", publicURL)
 	switch {
 	case cfg.WifiOnly:
-		fmt.Printf("  From anywhere:                 off (Wi-Fi only)\n")
+		fmt.Printf("  Send over Internet:            off (Wi-Fi only)\n")
 	case noInternet != "":
-		fmt.Printf("  From anywhere:                 off (%s)\n", noInternet)
+		fmt.Printf("  Send over Internet:            off (%s)\n", noInternet)
 	case tunnelPending:
-		fmt.Printf("  From anywhere:                 starting, appears on /host shortly\n")
+		fmt.Printf("  Send over Internet:            starting, appears on /host shortly\n")
 	default:
 		hostMu.RLock()
-		fmt.Printf("  From anywhere:                 %s\n", internetURL)
+		fmt.Printf("  Send over Internet:            %s\n", internetURL)
 		hostMu.RUnlock()
 	}
 	hostURL := fmt.Sprintf("http://localhost:%d/host", cfg.Port)
