@@ -41,8 +41,13 @@
   .qr.placeholder {
     background: transparent; border-style: dashed;
     aspect-ratio: 1; display: grid; place-items: center;
+    /* Rows are auto-sized, so without this the label and the button below it
+       would be pushed to opposite ends of the square instead of sitting
+       together in the middle of it. */
+    align-content: center; gap: 14px;
     color: var(--muted); font-size: 14px;
   }
+  .qr.placeholder .tilebtn { margin: 0; }
   .pending { opacity: .75; }
   .label { margin: 0 0 6px; font-size: 15px; font-weight: 650; }
   .url {
@@ -328,16 +333,18 @@
       </div>
       {{else if .NoCloudflared}}
       <div class="code pending" id="nocf">
-        <div class="qr placeholder"><span>Not set up</span></div>
+        <div class="qr placeholder">
+          <span>Not set up</span>
+          {{if .CanInstall}}
+          <button type="button" class="tilebtn primary" id="cf-install">Install cloudflared</button>
+          <button type="button" class="tilebtn primary" id="cf-restart" hidden>Restart File Drop</button>
+          {{end}}
+        </div>
         <p class="label">Send over Internet</p>
         <p class="note" id="cf-note">
           This needs <strong>cloudflared</strong>, which is not installed. Until it is,
           only the local code above works — sending from anywhere else is unavailable.
         </p>
-        {{if .CanInstall}}
-        <button type="button" class="tilebtn" id="cf-install">Install cloudflared</button>
-        <button type="button" class="tilebtn primary" id="cf-restart" hidden>Restart File Drop</button>
-        {{end}}
       </div>
       {{end}}
     </div>
