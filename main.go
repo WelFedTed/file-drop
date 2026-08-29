@@ -49,10 +49,14 @@ var (
 	flagDir            = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
 	flagHost           = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
 	flagMaxMB          = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
+	flagMinFreeMB      = flag.Int64("min-free", defaultMinFreeMB, "refuse a batch that would leave the drop volume with less than this many MB free (0 to skip the check)")
 	flagRecent         = flag.Int("recent", defaultRecent, "how many of the newest drop folders /host lists")
 	flagAutoDelete     = flag.Bool("auto-delete", false, "delete drop folders once they are older than -auto-delete-days")
 	flagAutoDeleteDays = flag.Int("auto-delete-days", defaultDeleteDays, "how old a drop folder has to be before -auto-delete removes it")
 	flagOpen           = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
+	flagNotify         = flag.Bool("notify", defaultNotify, "announce an arriving batch with a chime on /host and a tray notification")
+	flagTray           = flag.Bool("tray", defaultTray, "show a File Drop icon in the Windows notification area")
+	flagStartHidden    = flag.Bool("start-hidden", false, "start without a console window, leaving only the tray icon")
 	flagOpenHost       = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
 	flagCheckUpdates   = flag.Bool("check-updates", defaultChecks, "ask GitHub for a newer release at start-up")
 	flagVersion        = flag.Bool("version", false, "print the version and exit")
@@ -96,6 +100,21 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 	cfg := currentSettings()
+
+	// Starting hidden, if that was asked for. This happens before anything is
+	// bound, opened or checked, because the copy without a console does all of
+	// that instead - and two of us listening on one port would only mean the
+	// second cannot start. See detach_windows.go for why it is a new process
+	// rather than a hidden window.
+	if cfg.StartHidden && cfg.Tray && detachSupported {
+		switch handed, err := startDetached(); {
+		case err != nil:
+			log.Printf("note: could not start hidden (%v); carrying on with a console window", err)
+		case handed:
+			fmt.Println("\n  File Drop is starting hidden - look for its icon beside the clock.")
+			return
+		}
+	}
 
 	// Nothing waits on this: an unreachable GitHub must not delay or stop a
 	// server whose whole job is on the local network.
@@ -246,7 +265,30 @@ func main() {
 
 	mux.HandleFunc("/batches", func(w http.ResponseWriter, r *http.Request) {
 		cfg := currentSettings()
-		writeJSON(w, http.StatusOK, map[string]any{"batches": recentBatches(cfg.Dir, cfg.Recent)})
+		body := map[string]any{
+			"batches": recentBatches(cfg.Dir, cfg.Recent),
+			"active":  activeUploads(),
+			// So the page knows whether to make a noise about an arrival, which
+			// is a setting it would otherwise only learn by opening the cog.
+			"notify": cfg.Notify,
+		}
+		if free, ok := freeSpace(cfg.Dir); ok {
+			body["free"] = free
+			body["low"] = lowOnSpace(cfg.Dir, cfg.MinFreeMB)
+		}
+		writeJSON(w, http.StatusOK, body)
+	})
+
+	// Asked by the upload page before it sends anything, so a batch too big for
+	// the disk is turned away while it is still a sentence on a phone rather
+	// than a failed write half a gigabyte in. handleUpload asks the same
+	// question again for itself; this is only the early warning.
+	mux.HandleFunc("/space", func(w http.ResponseWriter, r *http.Request) {
+		cfg := currentSettings()
+		var want int64
+		fmt.Sscanf(r.URL.Query().Get("bytes"), "%d", &want)
+		ok, why := roomFor(cfg.Dir, cfg.MinFreeMB, want)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "error": why})
 	})
 
 	// The firewall button at the top of the settings panel. Like /settings and
@@ -643,18 +685,30 @@ func main() {
 	}
 	fmt.Printf("\n  Press Ctrl+C to stop.\n\n")
 
-	// Stop the tunnel with us, rather than leaving cloudflared running.
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
-	go func() {
-		<-stop
+	// One way out, however it is asked for: Ctrl+C in the console, or Quit on
+	// the tray menu. Both have to take the tunnel down with them rather than
+	// leaving cloudflared holding a public address open.
+	shutdown := sync.OnceFunc(func() {
 		if tunnel != nil {
 			log.Printf("closing the tunnel")
 			tunnel.Process.Kill()
 		}
 		srv.Close()
 		os.Exit(0)
+	})
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	go func() {
+		<-stop
+		shutdown()
 	}()
+
+	if cfg.Tray && traySupported {
+		if err := startTray(hostURL, shutdown); err != nil {
+			log.Printf("note: no tray icon (%v)", err)
+		}
+	}
 
 	// Bind before opening the browser rather than handing the whole job to
 	// ListenAndServe: once this returns the socket is accepting, so the page
@@ -709,6 +763,19 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if limit > 0 {
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
+
+	// The page asks /space before it starts, so this is the second answer to
+	// the same question rather than the first - but it is the one that counts,
+	// because nothing obliges a client to have asked.
+	if ok, why := roomFor(root, cfg.MinFreeMB, r.ContentLength); !ok {
+		log.Printf("refused an upload of %s from %s: %s", humanSize(r.ContentLength), clientIP(r), why)
+		writeJSON(w, http.StatusInsufficientStorage, map[string]any{"error": why})
+		return
+	}
+
+	// From here on the batch is on the wire, and /host shows it arriving.
+	tracked := beginUpload(clientIP(r))
+	defer tracked.done()
 
 	mr, err := r.MultipartReader()
 	if err != nil {
@@ -767,6 +834,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("new batch -> %s", dir)
+			tracked.setFolder(filepath.Base(dir))
 			// Reserve the manifest's name so an uploaded file cannot clobber it.
 			taken[strings.ToLower(sfvName)] = true
 		}
@@ -803,9 +871,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Checksum the bytes on their way to disk, so verifying costs no extra
-		// read and nothing has to be buffered.
+		// read and nothing has to be buffered. The third writer is what /host
+		// counts, for the same reason.
+		tracked.startFile(name)
 		sum := crc32.NewIEEE()
-		n, copyErr := io.Copy(io.MultiWriter(dst, sum), part)
+		n, copyErr := io.Copy(io.MultiWriter(dst, sum, tracked), part)
 		closeErr := dst.Close()
 		part.Close()
 		if copyErr != nil || closeErr != nil {
@@ -815,10 +885,21 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": tooBigMessage(limit)})
 				return
 			}
+			// The volume filled up while the batch was arriving - either it was
+			// tighter than the check at the door allowed for, or something else
+			// on the machine took the room in the meantime.
+			if isDiskFull(copyErr) || isDiskFull(closeErr) {
+				log.Printf("out of disk space while writing %s in %s", name, filepath.Base(dir))
+				writeJSON(w, http.StatusInsufficientStorage, map[string]any{
+					"error": "That computer ran out of disk space part way through, so nothing was kept. Ask whoever owns it to make some room.",
+				})
+				return
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "the upload was cut short - please try again"})
 			log.Printf("write %s failed: %v / %v", name, copyErr, closeErr)
 			return
 		}
+		tracked.finishFile()
 
 		gotCRC := fmt.Sprintf("%08x", sum.Sum32())
 		switch {
@@ -862,9 +943,14 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		len(saved), humanSize(written), verified, filepath.Base(dir))
 
 	// Only once the batch is complete and checksum-clean, so a window never
-	// opens on files that are about to be thrown away.
+	// opens on files that are about to be thrown away, and nothing announces a
+	// drop that is about to disappear.
 	if cfg.Open {
 		openFolder(dir)
+	}
+	if cfg.Notify {
+		notifyArrival(fmt.Sprintf("%d file%s · %s", len(saved), plural(len(saved)), humanSize(written)),
+			filepath.Base(dir))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -893,7 +979,10 @@ func randomToken() string {
 func publicGate(token string, next http.Handler) http.Handler {
 	// Everything else - the operator's screen, the batch listing, and above all
 	// /open, which puts windows on this desktop - stays off the internet route.
-	allowed := map[string]bool{"/": true, "/upload": true}
+	// /space is here because the guard it feeds has to work for a sender on the
+	// far side of the tunnel as much as one in the next room; all it discloses,
+	// to someone already holding the code, is whether their own batch fits.
+	allowed := map[string]bool{"/": true, "/upload": true, "/space": true}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed[r.URL.Path] {
@@ -1294,6 +1383,14 @@ func lanIP() (string, error) {
 		return "", errors.New("no active network adapter with an IPv4 address")
 	}
 	return best, nil
+}
+
+// plural is the "s" on the end of a count, which several messages here need.
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func humanSize(n int64) string {

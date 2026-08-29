@@ -27,10 +27,14 @@ type Settings struct {
 	Dir            string `json:"dir"`
 	Host           string `json:"host"`
 	MaxMB          int64  `json:"max_mb"`
+	MinFreeMB      int64  `json:"min_free_mb"`
 	Recent         int    `json:"recent"`
 	AutoDelete     bool   `json:"auto_delete"`
 	AutoDeleteDays int    `json:"auto_delete_days"`
 	Open           bool   `json:"open"`
+	Notify         bool   `json:"notify"`
+	Tray           bool   `json:"tray"`
+	StartHidden    bool   `json:"start_hidden"`
 	OpenHost       bool   `json:"open_host"`
 	CheckUpdates   bool   `json:"check_updates"`
 	LanOnly        bool   `json:"lan_only"`
@@ -49,8 +53,15 @@ const (
 	defaultRecent     = 10
 	defaultDeleteDays = 30
 	defaultOpen       = true
+	defaultNotify     = true
+	defaultTray       = true
 	defaultOpenHost   = true
 	defaultChecks     = true
+
+	// How much of the drop volume to leave alone, in MB. Filling a Windows
+	// system disk to the last byte takes the whole machine down with it, so an
+	// upload that would do that is refused while there is still room to say so.
+	defaultMinFreeMB = 500
 
 	settingsFile = "file-drop.toml"
 	// What the settings file was called when the program was file-drop-server.
@@ -62,15 +73,19 @@ const (
 
 func defaultSettings() Settings {
 	return Settings{
-		Port:   defaultPort,
-		Dir:    defaultDir,
-		MaxMB:  defaultMaxMB,
-		Recent: defaultRecent,
+		Port:      defaultPort,
+		Dir:       defaultDir,
+		MaxMB:     defaultMaxMB,
+		MinFreeMB: defaultMinFreeMB,
+		Recent:    defaultRecent,
 		// AutoDelete stays false: nothing here removes an upload unless asked.
 		AutoDeleteDays: defaultDeleteDays,
 		Open:           defaultOpen,
-		OpenHost:       defaultOpenHost,
-		CheckUpdates:   defaultChecks,
+		Notify:         defaultNotify,
+		Tray:           defaultTray,
+		// StartHidden stays false: the first run should show its own window.
+		OpenHost:     defaultOpenHost,
+		CheckUpdates: defaultChecks,
 	}
 }
 
@@ -186,6 +201,8 @@ func (s *Settings) applyFlags() {
 			s.Host = *flagHost
 		case "max":
 			s.MaxMB = *flagMaxMB
+		case "min-free":
+			s.MinFreeMB = *flagMinFreeMB
 		case "recent":
 			s.Recent = *flagRecent
 		case "auto-delete":
@@ -194,6 +211,12 @@ func (s *Settings) applyFlags() {
 			s.AutoDeleteDays = *flagAutoDeleteDays
 		case "open":
 			s.Open = *flagOpen
+		case "notify":
+			s.Notify = *flagNotify
+		case "tray":
+			s.Tray = *flagTray
+		case "start-hidden":
+			s.StartHidden = *flagStartHidden
 		case "open-host":
 			s.OpenHost = *flagOpenHost
 		case "check-updates":
@@ -242,6 +265,14 @@ func (s *Settings) normalise() error {
 	if s.MaxMB < 0 {
 		return errors.New("the largest batch cannot be negative - use 0 for no limit")
 	}
+	if s.MinFreeMB < 0 {
+		return errors.New("the free space to keep cannot be negative - use 0 to stop checking")
+	}
+	// Hiding the console when nothing else can bring it back would leave the
+	// program running with no way to reach it short of Task Manager.
+	if s.StartHidden && !s.Tray {
+		return errors.New("starting hidden needs the tray icon, which is switched off")
+	}
 	// The page asks for this list every three seconds and each entry means
 	// walking a batch folder, so the ceiling is there to stop a stray number
 	// making the operator's own screen the slowest thing on the machine.
@@ -284,6 +315,7 @@ func restartNeeded(was, now Settings) []string {
 		}
 	}
 	add(was.Port != now.Port, "port")
+	add(was.Tray != now.Tray, "tray icon")
 	add(was.Host != now.Host, "QR code address")
 	add(was.LanOnly != now.LanOnly, "internet link")
 	add(was.InternetOnly != now.InternetOnly, "local network link")
@@ -335,6 +367,8 @@ func (s Settings) toTOML() []byte {
 		"host", tomlString(s.Host))
 	entry("Largest single upload batch, in MB. 0 removes the limit.",
 		"max_mb", strconv.FormatInt(s.MaxMB, 10))
+	entry("Refuse a batch that would leave the drop volume with less than this\n# much room, in MB. 0 stops checking altogether.",
+		"min_free_mb", strconv.FormatInt(s.MinFreeMB, 10))
 	entry("How many of the newest drop folders /host lists.",
 		"recent", strconv.Itoa(s.Recent))
 	entry("Delete drop folders once they are older than auto_delete_days.\n# Off by default: nothing here removes an upload unless asked to.",
@@ -343,6 +377,12 @@ func (s Settings) toTOML() []byte {
 		"auto_delete_days", strconv.Itoa(s.AutoDeleteDays))
 	entry("Open each finished batch in Windows Explorer.",
 		"open", strconv.FormatBool(s.Open))
+	entry("Announce an arriving batch: a chime on the /host page and, when the\n# tray icon is on, a notification beside the clock.",
+		"notify", strconv.FormatBool(s.Notify))
+	entry("Put a File Drop icon in the notification area, with a menu for the\n# QR page, the drop folder and quitting.",
+		"tray", strconv.FormatBool(s.Tray))
+	entry("Start without a console window at all, leaving only the tray icon.\n# Needs tray to be on, since that icon is then the only way in.",
+		"start_hidden", strconv.FormatBool(s.StartHidden))
 	entry("Open the QR code page in a browser when the program starts.",
 		"open_host", strconv.FormatBool(s.OpenHost))
 	entry("Ask GitHub whether a newer release exists, once at start-up.",
@@ -376,6 +416,8 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignString(&s.Host, key, value)
 		case "max_mb":
 			err = assignInt64(&s.MaxMB, key, value)
+		case "min_free_mb":
+			err = assignInt64(&s.MinFreeMB, key, value)
 		case "recent":
 			err = assignInt(&s.Recent, key, value)
 		case "auto_delete":
@@ -384,6 +426,12 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignInt(&s.AutoDeleteDays, key, value)
 		case "open":
 			err = assignBool(&s.Open, key, value)
+		case "notify":
+			err = assignBool(&s.Notify, key, value)
+		case "tray":
+			err = assignBool(&s.Tray, key, value)
+		case "start_hidden":
+			err = assignBool(&s.StartHidden, key, value)
 		case "open_host":
 			err = assignBool(&s.OpenHost, key, value)
 		case "check_updates":

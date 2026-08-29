@@ -100,6 +100,34 @@
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--muted); font-size: 15px; margin: 0; }
   .path { color: var(--muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+  .path .free { white-space: nowrap; }
+  .path .free.low { color: #b45309; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .path .free.low { color: #fbbf24; } }
+
+  /* A batch still arriving, and one that just did. Between them these are the
+     only two things on this page that move on their own, so they are worth
+     being obvious: the operator is usually looking at the phone, not here. */
+  tr.live td { color: var(--muted); }
+  .live-folder { display: flex; align-items: baseline; gap: 8px; }
+  .live-name { font-family: inherit; }
+  .live-file {
+    display: block; margin-top: 3px; font-size: 12px; color: var(--muted);
+    max-width: 42ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    flex: none; animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  @keyframes landed {
+    from { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+    to   { background: transparent; }
+  }
+  tr.fresh td { animation: landed 2.5s ease-out; }
+  @media (prefers-reduced-motion: reduce) {
+    .dot { animation: none; }
+    tr.fresh td { animation-duration: .01s; }
+  }
   .foot {
     display: flex; justify-content: space-between; align-items: baseline;
     gap: 12px; padding: 0 6px 4px; font-size: 13px;
@@ -310,6 +338,15 @@
         </label>
 
         <label class="field">
+          <span class="name">Keep free</span>
+          <input name="min_free_mb" type="number" min="0" step="1" inputmode="numeric">
+          <span class="hint">
+            In MB. A batch that would leave the drop disk with less than this is turned
+            away before it starts, with a reason. 0 stops checking.
+          </span>
+        </label>
+
+        <label class="field">
           <span class="name">Recent drops shown</span>
           <input name="recent" type="number" min="1" max="500" step="1" inputmode="numeric">
           <span class="hint">How many of the newest batches this page lists, from 1 to 500.</span>
@@ -336,6 +373,21 @@
         <label class="check">
           <input name="open" type="checkbox">
           <span>Open each finished batch in File Explorer</span>
+        </label>
+
+        <label class="check">
+          <input name="notify" type="checkbox">
+          <span>Announce an arriving batch &mdash; a chime here, and a notification by the clock</span>
+        </label>
+
+        <label class="check">
+          <input name="tray" type="checkbox">
+          <span>Show a File Drop icon in the notification area <span class="badge">restart to apply</span></span>
+        </label>
+
+        <label class="check">
+          <input name="start_hidden" type="checkbox">
+          <span>Start without a console window, leaving only that icon</span>
         </label>
 
         <label class="check">
@@ -474,7 +526,7 @@
   <section class="card">
     <h2>Recent drops</h2>
     <div id="recent"><p class="empty">Nothing yet — uploads will appear here.</p></div>
-    <p class="path" style="margin-top:18px">Saving to <span id="root-path">{{.Root}}</span></p>
+    <p class="path" style="margin-top:18px">Saving to <span id="root-path">{{.Root}}</span><span class="free" id="free"></span></p>
   </section>
 
   <footer class="foot">
@@ -506,12 +558,98 @@ function open(folder, el) {
   });
 }
 
+// Arrival feedback. A batch takes as long to arrive as the phone needs to push
+// it, and the person running this is usually watching the phone rather than the
+// screen - so the page says out loud when something lands, and shows what is on
+// its way in the meantime.
+var landed = null;      // folders already seen; null until the first answer
+var justLanded = {};    // folder -> true, for the row that should light up
+var audio = null;
+
+// Browsers will not make a sound until the page has been interacted with, and
+// this one opens by itself at start-up. Arming on the first click or key press
+// costs nothing and covers the common case; when it never happens the highlight
+// and the tray notification carry the news on their own.
+function armAudio() {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
+  } catch (e) { audio = null; }
+}
+document.addEventListener('pointerdown', armAudio);
+document.addEventListener('keydown', armAudio);
+
+// Two notes, a fifth apart, on a short decay: enough to notice from across a
+// room, over in half a second.
+function chime() {
+  armAudio();
+  if (!audio || audio.state !== 'running') return;
+  [[880, 0], [1320, 0.13]].forEach(function (note) {
+    var osc = audio.createOscillator();
+    var gain = audio.createGain();
+    var at = audio.currentTime + note[1];
+    osc.type = 'sine';
+    osc.frequency.value = note[0];
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(0.2, at + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.42);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(at);
+    osc.stop(at + 0.45);
+  });
+}
+
+// The tab title, for when this page is behind something else. It goes back to
+// itself the moment the page is looked at again.
+var pageTitle = document.title;
+var unseen = 0;
+function flagInTitle() {
+  if (!document.hidden) return;
+  unseen++;
+  document.title = '(' + unseen + ') Files received — File Drop';
+}
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) { unseen = 0; document.title = pageTitle; }
+});
+
 function refresh() {
   fetch('/batches').then(function (r) { return r.json(); }).then(function (data) {
     var box = document.getElementById('recent');
-    var rows = (data.batches || []).filter(function (b) { return b.files > 0; });
-    if (!rows.length) {
+    var active = data.active || [];
+    var busy = {};
+    active.forEach(function (a) { if (a.folder) busy[a.folder] = true; });
+
+    // A folder being written to is not a drop yet: it is the row above.
+    var rows = (data.batches || []).filter(function (b) {
+      return b.files > 0 && !busy[b.folder];
+    });
+
+    // Anything that finished between two polls. The first answer only takes a
+    // census - the drops already on disk did not just arrive.
+    var arrived = [];
+    if (landed === null) {
+      landed = {};
+      rows.forEach(function (b) { landed[b.folder] = true; });
+    } else {
+      rows.forEach(function (b) {
+        if (!landed[b.folder]) { landed[b.folder] = true; arrived.push(b.folder); }
+      });
+    }
+    if (arrived.length) {
+      arrived.forEach(function (folder) { justLanded[folder] = true; });
+      if (data.notify) { chime(); flagInTitle(); }
+      // Long enough for the highlight to play out once, so a redraw in the
+      // meantime does not restart it.
+      setTimeout(function () {
+        arrived.forEach(function (folder) { delete justLanded[folder]; });
+      }, 3000);
+    }
+
+    showFreeSpace(data);
+
+    if (!rows.length && !active.length) {
       box.innerHTML = '<p class="empty">Nothing yet — uploads will appear here.</p>';
+      schedule(3000);
       return;
     }
     var table = document.createElement('table');
@@ -519,8 +657,11 @@ function refresh() {
     head.innerHTML = '<th>Folder</th><th class="num">Files</th><th class="num">Size</th><th></th>';
     table.appendChild(head);
 
+    active.forEach(function (a) { table.appendChild(liveRow(a)); });
+
     rows.forEach(function (b) {
       var tr = document.createElement('tr');
+      if (justLanded[b.folder]) tr.className = 'fresh';
 
       var folderCell = document.createElement('td');
       folderCell.className = 'folder';
@@ -574,11 +715,72 @@ function refresh() {
 
     box.innerHTML = '';
     box.appendChild(table);
-  }).catch(function () { /* server restarting; the next poll will pick it up */ });
+    schedule(active.length ? 1000 : 3000);
+  }).catch(function () {
+    // Server restarting, most likely; the next poll picks it up.
+    schedule(3000);
+  });
+}
+
+// One row for a batch still coming in. It has no folder to open and nothing to
+// delete yet, so those controls are left off rather than shown broken.
+function liveRow(a) {
+  var tr = document.createElement('tr');
+  tr.className = 'live';
+
+  var folderCell = document.createElement('td');
+  folderCell.className = 'folder';
+  var head = document.createElement('span');
+  head.className = 'live-folder';
+  var dot = document.createElement('span');
+  dot.className = 'dot';
+  var name = document.createElement('span');
+  name.className = 'live-name';
+  name.textContent = a.folder || 'receiving…';
+  head.appendChild(dot);
+  head.appendChild(name);
+  folderCell.appendChild(head);
+  if (a.file) {
+    var file = document.createElement('span');
+    file.className = 'live-file';
+    file.textContent = a.file + (a.from ? '  ·  from ' + a.from : '');
+    folderCell.appendChild(file);
+  }
+
+  var filesCell = document.createElement('td');
+  filesCell.className = 'num';
+  filesCell.textContent = a.files || 0;
+
+  var sizeCell = document.createElement('td');
+  sizeCell.className = 'num';
+  sizeCell.textContent = fmt(a.bytes || 0);
+
+  tr.appendChild(folderCell);
+  tr.appendChild(filesCell);
+  tr.appendChild(sizeCell);
+  tr.appendChild(document.createElement('td'));
+  return tr;
+}
+
+// How much room is left where the drops go. Silent when the server could not
+// measure it - a network drive, say - and loud when it is down to the reserve,
+// because an upload refused for space is much less puzzling if the page has
+// been saying so beforehand.
+function showFreeSpace(data) {
+  var el = document.getElementById('free');
+  if (typeof data.free !== 'number') { el.textContent = ''; return; }
+  el.textContent = '  ·  ' + fmt(data.free) + ' free';
+  el.className = 'free' + (data.low ? ' low' : '');
+  el.title = data.low ? 'Uploads are being refused until there is more room here.' : '';
+}
+
+var pollTimer = null;
+function schedule(ms) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refresh, ms);
 }
 
 refresh();
-setInterval(refresh, 3000);
 
 // Restarting. The server answers, then goes away and comes back on the same
 // port a second or so later, so the page waits for it and reloads itself rather
@@ -743,10 +945,14 @@ function restartServer(say, onFail) {
   function fill(s) {
     field('dir').value = s.dir || '';
     field('max_mb').value = s.max_mb;
+    field('min_free_mb').value = s.min_free_mb;
     field('recent').value = s.recent;
     field('auto_delete').checked = !!s.auto_delete;
     field('auto_delete_days').value = s.auto_delete_days;
     field('open').checked = !!s.open;
+    field('notify').checked = !!s.notify;
+    field('tray').checked = !!s.tray;
+    field('start_hidden').checked = !!s.start_hidden;
     field('open_host').checked = !!s.open_host;
     field('check_updates').checked = !!s.check_updates;
     field('port').value = s.port;
@@ -764,10 +970,14 @@ function restartServer(say, onFail) {
     return {
       dir: field('dir').value,
       max_mb: Number(field('max_mb').value || 0),
+      min_free_mb: Number(field('min_free_mb').value || 0),
       recent: Number(field('recent').value || 0),
       auto_delete: field('auto_delete').checked,
       auto_delete_days: Number(field('auto_delete_days').value || 0),
       open: field('open').checked,
+      notify: field('notify').checked,
+      tray: field('tray').checked,
+      start_hidden: field('start_hidden').checked,
       open_host: field('open_host').checked,
       check_updates: field('check_updates').checked,
       port: Number(field('port').value || 0),

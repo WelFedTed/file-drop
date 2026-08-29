@@ -62,10 +62,11 @@ them.
 > and noted at start-up; the next save writes `file-drop.toml` and that one wins
 > from then on. Nothing is deleted for you.
 
-The drop folder, the batch limit, how many drops are listed and the Explorer
-pop-up take effect the moment you save. The listeners, the QR codes and the
-tunnel are built once at start-up, so changing the port, the QR address or
-anything about the internet link needs a
+The drop folder, the batch limit, the free-space reserve, how many drops are
+listed, the arrival chime and the Explorer pop-up take effect the moment you
+save. The listeners, the QR codes, the tunnel and the tray icon are built once at
+start-up, so changing the port, the QR address, the tray icon or anything about
+the internet link needs a
 restart — those fields are marked **restart to apply**, and the panel tells you
 which ones are waiting on one. Opening this page at start-up is not marked,
 because there is nothing to re-apply: it simply describes what the next start
@@ -101,10 +102,14 @@ falls back to the default.
 | `-dir` | `dir` | `C:\file-drop` | Where batches are saved |
 | `-host` | `host` | auto | Address baked into the QR code |
 | `-max` | `max_mb` | `0` | Largest single batch, in MB (`0` = no limit) |
+| `-min-free` | `min_free_mb` | `500` | Refuse a batch that would leave the drop disk with less than this many MB free (`0` = do not check) |
 | `-recent` | `recent` | `10` | How many of the newest drops `/host` lists (1-500) |
 | `-auto-delete` | `auto_delete` | `false` | Delete drop folders older than the age below |
 | `-auto-delete-days` | `auto_delete_days` | `30` | How old a drop folder must be before that removes it (1-3650) |
 | `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
+| `-notify` | `notify` | `true` | Announce an arriving batch: a chime on `/host` and a notification by the clock |
+| `-tray` | `tray` | `true` | Show a File Drop icon in the notification area |
+| `-start-hidden` | `start_hidden` | `false` | Start with no console window, leaving only that icon |
 | `-open-host` | `open_host` | `true` | Open `/host` in a browser at start-up (`-open-host=false` to stop) |
 | `-check-updates` | `check_updates` | `true` | Ask GitHub for a newer release at start-up |
 | `-version` | — | — | Print the version and exit |
@@ -353,6 +358,21 @@ screen omits the word "checked".
 
 ## When a batch lands
 
+`/host` says so, twice over. While the files are still coming in, a row appears
+at the top of **Recent drops** with a pulsing dot, the folder being written, the
+file on the wire and a byte count that climbs — that batch is not listed as a
+finished drop until it is one. When it completes, the new row lights up for a
+couple of seconds and the page plays a two-note chime.
+
+If the tray icon is on, a notification appears by the clock at the same time,
+which is what covers you when the page is behind something else or on another
+screen. Both are the same setting: untick **Announce an arriving batch** in the
+panel, or run with `-notify=false`, and the page and the clock both go quiet.
+
+> Browsers refuse to play sound on a page nobody has interacted with, and `/host`
+> opens by itself at start-up. Click the page once and the chime works from then
+> on. The highlight, the tab title and the notification never depended on it.
+
 Explorer opens on the new folder as soon as the batch is complete and every
 checksum has passed — never on a batch that is about to be thrown away. Each
 batch opens its own view, so if several clients upload back to back you get
@@ -384,6 +404,55 @@ something it cannot delete would be a button that only ever fails.
 
 The ten newest batches are listed. Older ones are still on disk — the list is
 just the tail of it. Change how many with `-recent`, or from the settings panel.
+
+## The icon by the clock
+
+File Drop puts an icon in the notification area. Click it to open the QR page;
+right-click for a short menu:
+
+| | |
+|---|---|
+| **Open the QR page** | the same as a plain click |
+| **Open the drop folder** | Explorer, at whatever the drop folder currently is |
+| **Show / hide the console window** | only when there is one this program may hide — see below |
+| **Quit File Drop** | stops the server and takes the tunnel down with it |
+
+Quit here is the same shutdown as Ctrl+C, so `cloudflared` is never left running
+with a public address pointing at a port that something else could later take.
+
+Turn the icon off with `-tray=false` or from the settings panel; that one needs a
+restart, and the panel says so.
+
+**Starting without a console window.** Tick **Start without a console window**,
+or pass `-start-hidden`, and File Drop launches one more copy of itself with no
+console attached and steps aside — the icon by the clock is then the only way in,
+which is why the setting is refused when the tray icon is switched off.
+
+It works this way round because hiding a console window after start-up does not
+work on Windows 11. With Windows Terminal as the default terminal, the window
+`GetConsoleWindow` reports is a pseudo-console standing in for a terminal that
+belongs to another process; hiding it hides nothing anyone can see, and the
+window on screen is the terminal's, possibly with your other tabs in it. Not
+having a console at all needs no such cooperation. For the same reason the
+**Show / hide the console window** menu item only appears when the window really
+is a classic console owned by this program alone.
+
+## Running out of disk
+
+Uploads are refused before they start if the batch would not fit. The upload page
+asks first, so the sender gets a sentence on their phone rather than a failure
+half a gigabyte in, and `/upload` asks again on its own account for anything that
+did not.
+
+By default the drop volume is kept 500 MB clear — Windows behaves badly on a full
+system disk, and the program most likely to fill one is the one taking whatever a
+phone sends. Change it with `-min-free`, or set it to `0` to stop checking.
+
+`/host` shows the free space beside the drop folder, and turns it amber once it
+is down to the reserve, so an upload refused for want of room is not the first
+you hear of it. Should the disk fill mid-batch anyway — something else on the
+machine taking the space while files are arriving — the batch is discarded like
+any other failure and the sender is told which failure it was.
 
 ## Notes on how it behaves
 

@@ -483,6 +483,25 @@
       return;
     }
 
+    // The other reason a batch this size might not be welcome: the computer has
+    // nowhere to put it. Asking first turns a failed write half way through into
+    // a sentence before anything leaves this phone. If the question itself does
+    // not get through, carry on - /upload asks it again on its own account, and
+    // a check that cannot run is no reason to refuse to send.
+    fetch('/space?bytes=' + bytes).then(function (r) { return r.json(); }).then(function (res) {
+      if (res && res.ok === false) {
+        fail(res.error || 'That computer does not have room for this batch.');
+        return;
+      }
+      start();
+    }).catch(start);
+  };
+
+  // Everything from here on assumes the batch is going: fingerprint the files,
+  // then upload them.
+  function start() {
+    var bytes = queue.reduce(function (sum, e) { return sum + e.file.size; }, 0);
+
     show(sendingStep);
     el('barFill').style.width = '0%';
     el('sendingTitle').textContent = 'Checking ' + queue.length + ' file' + (queue.length === 1 ? '' : 's') + '…';
@@ -514,7 +533,7 @@
     chain.then(function (body) { upload(body, bytes); }, function () {
       fail('Could not read those files from this device. Try picking them again.');
     });
-  };
+  }
 
   function upload(body, bytes) {
     el('barFill').style.width = '0%';
