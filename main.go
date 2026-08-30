@@ -41,6 +41,15 @@ var indexHTML []byte
 //go:embed web/host.html
 var hostHTMLSrc string
 
+// The tab icon for both pages, which is the same picture as the tray icon and
+// the one on the executable: internal/icon draws it, tools/mksyso writes it out
+// as icon.png, and this embeds that. Regenerate it with:
+//
+//	go run ./tools/mksyso -png icon.png
+//
+//go:embed icon.png
+var faviconPNG []byte
+
 // Every flag here has a twin in the settings file, and the two meet in
 // Settings.applyFlags: the file supplies the values, a flag typed on the
 // command line overrides its own for that run only.
@@ -259,6 +268,16 @@ func main() {
 	mux.HandleFunc("/qr.png", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		w.Write(qrPNG)
+	})
+
+	// Both pages point at this, and the internet route is allowed to fetch it:
+	// a client sent a link from off-network should see the same tab icon as
+	// someone in the next room. It never changes for a given build, so it is
+	// worth caching rather than asking for on every page load.
+	mux.HandleFunc("/favicon.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(faviconPNG)
 	})
 
 	mux.HandleFunc("/upload", handleUpload)
@@ -982,7 +1001,10 @@ func publicGate(token string, next http.Handler) http.Handler {
 	// /space is here because the guard it feeds has to work for a sender on the
 	// far side of the tunnel as much as one in the next room; all it discloses,
 	// to someone already holding the code, is whether their own batch fits.
-	allowed := map[string]bool{"/": true, "/upload": true, "/space": true}
+	// /favicon.png is the tab icon, and gives nothing away at all.
+	allowed := map[string]bool{
+		"/": true, "/upload": true, "/space": true, "/favicon.png": true,
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed[r.URL.Path] {
