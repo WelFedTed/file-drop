@@ -15,7 +15,7 @@ import (
 // program:
 //
 //	go run ./tools/mksyso
-const version = "0.7.0"
+const version = "0.7.1"
 
 // updateRepo is where the update check looks. Owner and name of the GitHub
 // repository these releases are published to.
