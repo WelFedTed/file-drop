@@ -167,17 +167,24 @@ shortcut both depend on it staying put.
 
 ```bash
 # 1. set `const version` in version.go, then
-go run ./tools/mksyso                       # regenerate the Windows version resource
+go run ./tools/mksyso                       # regenerate the Windows resources
 go build -trimpath -ldflags "-s -w" -o builds/file-drop.exe .
 sha256sum builds/file-drop.exe              # into checksums.txt as "<sum>  file-drop.exe"
 ```
 
-`tools/mksyso` writes `rsrc_windows_amd64.syso`, which is what gives the built
-executable its **File version** in Explorer's Details tab. Go cannot express a
-Windows version resource, and the usual answer is a third-party generator; this
-one is a hundred lines in the tree, reads the same version constant as the rest
-of the program, and keeps the project on its single dependency. The generated
-file is committed, so an ordinary `go build` picks it up.
+`tools/mksyso` writes `rsrc_windows_amd64.syso`, which carries two things: the
+**File version** Explorer shows in the Details tab, and the icon Explorer, the
+taskbar and Alt+Tab show. Go cannot express either, and the usual answer is a
+third-party generator; this one is a couple of hundred lines in the tree, reads
+the same version constant as the rest of the program, and keeps the project on
+its single dependency. The generated file is committed, so an ordinary
+`go build` picks it up.
+
+The icon is not a file either. `internal/icon` draws it — a rounded blue tile
+with an arrow coming down onto a line — and both the resource compiler and the
+running program use that one drawing: the executable gets it at nine sizes from
+16 to 256 pixels, and the tray icon is rendered at whatever size the shell asks
+for. Change the picture in one place and everything showing it follows.
 
 ## Keeping the QR code permanent
 

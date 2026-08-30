@@ -1,6 +1,10 @@
-//go:build windows
-
-package main
+// Package icon draws the File Drop icon.
+//
+// It lives apart from the program because two things need it and they must not
+// drift: the tray icon, built at run time at whatever size the shell asks for,
+// and the icon compiled into the executable by tools/mksyso, which is what
+// Explorer and the taskbar show. One picture, one place.
+package icon
 
 import (
 	"bytes"
@@ -8,24 +12,23 @@ import (
 	"math"
 )
 
-// The tray icon, drawn here rather than shipped as a file.
-//
-// Windows will build an icon out of raw bytes handed to CreateIconFromResource,
-// which means the picture can be a few dozen lines of arithmetic instead of a
-// binary blob in a repository that is otherwise all text - and it can be drawn
-// at whatever size the shell asks for, rather than scaled from one that is
-// nearly right. What it draws is a rounded blue tile with a white arrow coming
-// down onto a line: something arriving on a machine.
+// The icon is drawn rather than shipped as a file. Windows will build one out
+// of raw bytes handed to CreateIconFromResource, and the resource compiler here
+// is our own, so the picture can be a few dozen lines of arithmetic instead of
+// a binary blob in a repository that is otherwise all text - and every size is
+// rendered at its own size rather than scaled from one that is nearly right.
+// What it draws is a rounded blue tile with a white arrow coming down onto a
+// line: something arriving on a machine.
 
-// iconImage returns one icon image in the form Windows reads: a
+// Image returns one icon image in the form Windows reads: a
 // BITMAPINFOHEADER whose height covers both masks, the colour pixels bottom-up,
 // then the AND mask, which is all zeros because the alpha channel does that job
 // on anything since XP.
-func iconImage(size int) []byte {
+func Image(size int) []byte {
 	if size < 8 {
 		size = 8
 	}
-	pixels := drawIcon(size)
+	pixels := Draw(size)
 
 	var b bytes.Buffer
 	put32 := func(v uint32) { binary.Write(&b, binary.LittleEndian, v) }
@@ -67,10 +70,10 @@ var (
 	iconInk  = [3]float64{0xff, 0xff, 0xff}
 )
 
-// drawIcon renders the glyph with four-by-four supersampling, which is what
+// Draw renders the glyph with four-by-four supersampling, which is what
 // keeps the rounded corners and the arrow's diagonals from looking like steps
 // at the 16-pixel size the notification area actually uses.
-func drawIcon(size int) [][4]byte {
+func Draw(size int) [][4]byte {
 	const samples = 4
 
 	out := make([][4]byte, size*size)

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"filedrop/internal/icon"
 )
 
 // The notification-area icon.
@@ -251,7 +253,7 @@ func loadTrayIcon() syscall.Handle {
 	if size < 8 || size > 256 {
 		size = 16
 	}
-	bits := iconImage(int(size))
+	bits := icon.Image(int(size))
 	// 0x00030000 is the icon format version, which has not changed since
 	// Windows 3.0 and is still what this call wants to be told.
 	h, _, _ := procCreateIcon.Call(
