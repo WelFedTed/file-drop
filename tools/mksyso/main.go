@@ -42,6 +42,7 @@ func main() {
 		flagVersion = flag.String("version", "", "version to stamp (defaults to the one in version.go)")
 		flagOut     = flag.String("out", "rsrc_windows_amd64.syso", "object file to write")
 		flagName    = flag.String("name", "file-drop.exe", "original file name to record")
+		flagPNG     = flag.String("png", "", "also write the icon as a PNG here, for anything that wants a picture rather than a resource")
 	)
 	flag.Parse()
 
@@ -70,7 +71,22 @@ func main() {
 		log.Fatalf("could not write %s: %v", *flagOut, err)
 	}
 	fmt.Printf("wrote %s: version %s, icon at %d sizes\n", *flagOut, ver, len(iconSizes))
+
+	// The icon exists as arithmetic, not as a file, which leaves nothing to
+	// point at when something outside the program wants the picture - a README,
+	// a release page, a shortcut. This writes one out from the same drawing, so
+	// the copy cannot quietly disagree with what the program shows.
+	if *flagPNG != "" {
+		if err := os.WriteFile(*flagPNG, iconPNG(iconExportSize), 0o644); err != nil {
+			log.Fatalf("could not write %s: %v", *flagPNG, err)
+		}
+		fmt.Printf("wrote %s: the icon at %d pixels\n", *flagPNG, iconExportSize)
+	}
 }
+
+// iconExportSize is how big the exported PNG is: the largest size the icon is
+// drawn at, so it can be scaled down to anything and up to nothing.
+const iconExportSize = 256
 
 // The resource types this writes. RT_ICON holds one picture each; RT_GROUP_ICON
 // is the little table that ties them together, and is what Explorer, the

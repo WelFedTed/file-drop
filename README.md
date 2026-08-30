@@ -186,6 +186,14 @@ running program use that one drawing: the executable gets it at nine sizes from
 16 to 256 pixels, and the tray icon is rendered at whatever size the shell asks
 for. Change the picture in one place and everything showing it follows.
 
+`icon.png` in the repository root is a 256-pixel copy for anything that wants a
+picture rather than a resource. It is generated, not drawn by hand, so regenerate
+it rather than editing it:
+
+```bash
+go run ./tools/mksyso -png icon.png
+```
+
 ## Keeping the QR code permanent
 
 The QR code encodes `http://<this-machine's-ip>:<port>/`. It keeps working
