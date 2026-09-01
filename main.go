@@ -401,7 +401,11 @@ func main() {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
 		}
-		log.Printf("installing cloudflared with winget")
+		if legacyBuild() {
+			log.Printf("installing cloudflared from Cloudflare's own installer")
+		} else {
+			log.Printf("installing cloudflared with winget")
+		}
 		if err := installCloudflared(); err != nil {
 			log.Printf("cloudflared not installed: %v", err)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
@@ -1071,6 +1075,11 @@ func cloudflaredPath() (string, error) {
 	refreshExecPathOnce()
 	if bin, err := exec.LookPath("cloudflared"); err == nil {
 		return bin, nil
+	}
+	// The advice has to match the build: winget is not on the machines the
+	// Windows 7 and 8 build runs on.
+	if legacyBuild() {
+		return "", errors.New("cloudflared is not installed - get it from " + cloudflaredMSI)
 	}
 	return "", errors.New("cloudflared is not installed - run: winget install Cloudflare.cloudflared")
 }

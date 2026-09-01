@@ -333,6 +333,22 @@ cannot pick up a newly installed client — the tunnel is only ever started at
 boot — so a successful install turns into a **Restart File Drop** button, and
 the page reloads itself once the server is back.
 
+The [Windows 7 and 8 build](#the-build-for-windows-7-and-8) takes a different
+route, because winget does not exist there: it downloads
+[Cloudflare's own installer](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi)
+and hands it to `msiexec` behind the same prompt. Since that is an installer
+fetched over the network rather than a package manager's business, it is checked
+before it is run — the file has to actually be an MSI, and it has to carry
+Cloudflare's Authenticode signature, or it is thrown away unrun. The
+administrator prompt then names the publisher too, which is the last word: what
+you should see there is **Cloudflare, Inc.**
+
+> The signature is judged on **who signed it** rather than on whether Windows
+> can validate the whole chain. These are old machines, and one that has not
+> been updated in years may lack the roots to check a current certificate;
+> refusing Cloudflare's own installer over that would help nobody. Unsigned, or
+> signed by anyone else, is refused outright.
+
 If the client is there but the tunnel fails to come up, the second code stays a
 placeholder for a minute and a half and then removes itself.
 
@@ -344,7 +360,8 @@ It has to be two codes. The internet route is HTTPS, and a browser will not let
 an HTTPS page talk to `http://10.0.0.10:8080`, so a page loaded from the
 internet cannot detect the LAN and switch to it. One code cannot cover both.
 
-**Requires** cloudflared: `winget install Cloudflare.cloudflared`
+**Requires** cloudflared: `winget install Cloudflare.cloudflared`, or the MSI
+linked above on Windows 7 and 8.
 
 ### What guards the internet route
 
@@ -554,7 +571,8 @@ The firewall button is in the same bracket: someone else on the LAN could make
 an administrator prompt appear on your screen, but only whoever is sitting at
 that screen can answer it, and the server itself never runs elevated — the
 prompt covers the single `netsh` command and nothing else. The same goes for
-installing cloudflared, which is one `winget` command behind the same prompt,
+installing cloudflared, which is one `winget` command — or, on Windows 7 and 8,
+one `msiexec` against a signature-checked installer — behind the same prompt,
 and for **Restart**, which starts the same program again with the same
 arguments. None of the three is reachable over the internet route.
 
