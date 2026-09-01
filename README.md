@@ -480,13 +480,20 @@ Each row also has a **trash icon** that deletes that folder and everything in
 it. It asks first, naming the folder and how many files are in it, because the
 files are removed rather than sent to the recycle bin.
 
+**Purge all** sits in the bottom right of the same box and empties the drop
+folder in one go, showing what that would reclaim — `Purge all · 4.2 GB`. It
+means every drop, not the ten on screen, so it asks first with the real number
+and the real size. A batch that is still arriving is left alone rather than
+pulled out from under the phone sending it, and you are told when that happens.
+The button is not there at all when there is nothing to purge.
+
 **Deleting old drops on a schedule** is off by default. Turn it on in the
 settings panel, or with `-auto-delete`, and set how many days a folder may
 survive with `-auto-delete-days`. The sweep runs at start-up and hourly, and
 reads the settings each time, so switching it on or off takes effect without a
 restart.
 
-Both only ever remove folders this program created — the timestamped ones. The
+All three only ever remove folders this program created — the timestamped ones. The
 drop root is somewhere you chose and may hold other things; anything not matching
 that naming is left alone, `qr-code.png` included. For the same reason those
 other folders no longer appear in **Recent drops**: a row offering to delete

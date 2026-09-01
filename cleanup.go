@@ -79,6 +79,54 @@ func deleteBatch(root, name string) error {
 // sweepOldBatches removes the drop folders older than the configured age. It
 // reports how many went, and stops at nothing: a folder it cannot read is left
 // alone rather than treated as expired.
+// purgeResult is what emptying the drop folder came to.
+type purgeResult struct {
+	Removed int `json:"removed"`
+	// Folders left alone because a phone is still uploading into them. Deleting
+	// one mid-batch would take the files out from under the upload writing them.
+	Skipped int `json:"skipped"`
+	Failed  int `json:"failed"`
+}
+
+// purgeAllBatches empties the drop folder of drops - every one, not merely the
+// ones /host happens to be listing. Anything else living in that folder is left
+// alone: the root is somewhere the operator chose, and only the timestamped
+// folders this program made are its to delete.
+func purgeAllBatches(root string) purgeResult {
+	var out purgeResult
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		log.Printf("could not read %s to purge it: %v", root, err)
+		return out
+	}
+
+	busy := map[string]bool{}
+	for _, u := range activeUploads() {
+		if u.Folder != "" {
+			busy[u.Folder] = true
+		}
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() || !batchPattern.MatchString(e.Name()) {
+			continue
+		}
+		if busy[e.Name()] {
+			log.Printf("leaving %s alone: it is still being uploaded to", e.Name())
+			out.Skipped++
+			continue
+		}
+		if err := deleteBatch(root, e.Name()); err != nil {
+			log.Printf("purge: %v", err)
+			out.Failed++
+			continue
+		}
+		out.Removed++
+	}
+	return out
+}
+
 func sweepOldBatches(root string, days int) int {
 	if days < 1 {
 		return 0

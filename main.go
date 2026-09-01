@@ -284,9 +284,23 @@ func main() {
 
 	mux.HandleFunc("/batches", func(w http.ResponseWriter, r *http.Request) {
 		cfg := currentSettings()
+		active := activeUploads()
+		growing := map[string]bool{}
+		for _, u := range active {
+			if u.Folder != "" {
+				growing[u.Folder] = true
+			}
+		}
+
+		listed, total, totalBytes := recentBatches(cfg.Dir, cfg.Recent, growing)
 		body := map[string]any{
-			"batches": recentBatches(cfg.Dir, cfg.Recent),
-			"active":  activeUploads(),
+			"batches": listed,
+			// What is in the drop root altogether, which is not what is listed:
+			// the button that offers to delete every one of them should say the
+			// number and the size it means.
+			"total":       total,
+			"total_bytes": totalBytes,
+			"active":      active,
 			// So the page knows whether to make a noise about an arrival, which
 			// is a setting it would otherwise only learn by opening the cog.
 			"notify": cfg.Notify,
@@ -337,6 +351,22 @@ func main() {
 		default:
 			http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// Emptying the drop folder, from the button under the list. Every drop, not
+	// only the ones being listed - and nothing that is not a drop. Local-only,
+	// like /delete, and for the same reasons.
+	mux.HandleFunc("/purge", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		root := currentSettings().Dir
+		log.Printf("purging every drop in %s", root)
+		result := purgeAllBatches(root)
+		log.Printf("purged %d drop folder(s); %d skipped, %d failed",
+			result.Removed, result.Skipped, result.Failed)
+		writeJSON(w, http.StatusOK, result)
 	})
 
 	// Removing one drop folder, from the trash icon on its row. Local-only, and
@@ -1329,11 +1359,88 @@ type batch struct {
 	Bytes  int64  `json:"bytes"`
 }
 
-// recentBatches lists the newest drop folders for the operator's /host screen.
-func recentBatches(root string, limit int) []batch {
+// batchStat is what one drop folder came to, once somebody has counted.
+type batchStat struct {
+	Files int
+	Bytes int64
+}
+
+// batchStats remembers those answers. The purge button names the size of
+// everything in the drop root, which means adding up every folder rather than
+// the ten on screen - and this page asks every three seconds. A finished batch
+// never changes, though, so each folder is walked once and remembered; the only
+// ones counted again are those still being uploaded into.
+var batchStats = struct {
+	sync.Mutex
+	m map[string]batchStat
+}{m: map[string]batchStat{}}
+
+// statBatch counts a drop folder, from memory where it can. A folder still
+// receiving files is counted afresh and not remembered, because it is still
+// growing.
+func statBatch(root, name string, growing bool) batchStat {
+	key := filepath.Join(root, name)
+
+	if !growing {
+		batchStats.Lock()
+		st, ok := batchStats.m[key]
+		batchStats.Unlock()
+		if ok {
+			return st
+		}
+	}
+
+	var st batchStat
+	// Walk the tree: a batch can contain uploaded folders, not just files.
+	filepath.WalkDir(key, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if filepath.Dir(path) == key && strings.EqualFold(d.Name(), sfvName) {
+			return nil // the manifest is not one of the client's files
+		}
+		if info, err := d.Info(); err == nil {
+			st.Files++
+			st.Bytes += info.Size()
+		}
+		return nil
+	})
+
+	if !growing {
+		batchStats.Lock()
+		batchStats.m[key] = st
+		batchStats.Unlock()
+	}
+	return st
+}
+
+// forgetBatchesExcept drops what is remembered about folders that are no longer
+// there, so deleting drops does not leave the map growing for ever.
+func forgetBatchesExcept(root string, names []string) {
+	keep := make(map[string]bool, len(names))
+	for _, n := range names {
+		keep[filepath.Join(root, n)] = true
+	}
+	batchStats.Lock()
+	for key := range batchStats.m {
+		if !keep[key] {
+			delete(batchStats.m, key)
+		}
+	}
+	batchStats.Unlock()
+}
+
+// recentBatches lists the newest drop folders for the operator's /host screen,
+// along with how many there are altogether and what they come to. The list is
+// capped; the button that offers to delete every one of them should name the
+// real number and the real size, not the ones on screen.
+//
+// growing names the folders an upload is still writing into, which are counted
+// afresh rather than from memory.
+func recentBatches(root string, limit int, growing map[string]bool) ([]batch, int, int64) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil
+		return nil, 0, 0
 	}
 	var names []string
 	for _, e := range entries {
@@ -1347,6 +1454,19 @@ func recentBatches(root string, limit int) []batch {
 			names = append(names, e.Name())
 		}
 	}
+	forgetBatchesExcept(root, names)
+
+	// Every folder is counted, because the total is over all of them. Only the
+	// newest few are listed, and all but the growing ones come from memory.
+	stats := make(map[string]batchStat, len(names))
+	var totalBytes int64
+	for _, name := range names {
+		st := statBatch(root, name, growing[name])
+		stats[name] = st
+		totalBytes += st.Bytes
+	}
+	total := len(names)
+
 	// Folder names are timestamps, so a reverse string sort is newest-first.
 	sort.Sort(sort.Reverse(sort.StringSlice(names)))
 	if len(names) > limit {
@@ -1355,25 +1475,10 @@ func recentBatches(root string, limit int) []batch {
 
 	out := make([]batch, 0, len(names))
 	for _, name := range names {
-		// Walk the tree: a batch can contain uploaded folders, not just files.
-		b := batch{Folder: name}
-		batchRoot := filepath.Join(root, name)
-		filepath.WalkDir(batchRoot, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			if filepath.Dir(path) == batchRoot && strings.EqualFold(d.Name(), sfvName) {
-				return nil // the manifest is not one of the client's files
-			}
-			if info, err := d.Info(); err == nil {
-				b.Files++
-				b.Bytes += info.Size()
-			}
-			return nil
-		})
-		out = append(out, b)
+		st := stats[name]
+		out = append(out, batch{Folder: name, Files: st.Files, Bytes: st.Bytes})
 	}
-	return out
+	return out, total, totalBytes
 }
 
 // lanIP picks the address other devices on the network can reach, preferring

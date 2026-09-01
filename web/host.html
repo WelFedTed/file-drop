@@ -101,6 +101,23 @@
   tr:last-child td { border-bottom: 0; }
   .empty { color: var(--muted); font-size: 15px; margin: 0; }
   .path { color: var(--muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+  /* Where the drop folder is, and the button that empties it. */
+  .dropsfoot {
+    margin-top: 18px; display: flex; align-items: flex-end;
+    justify-content: space-between; gap: 16px;
+  }
+  .dropsfoot .path { margin: 0; }
+  .purge {
+    flex: none; display: inline-flex; align-items: center; gap: 8px;
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 7px 12px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+    transition: color .12s, border-color .12s;
+  }
+  /* Muted until you mean it, like the trash icon on every row. */
+  .purge:hover, .purge:focus-visible { color: #dc2626; border-color: #dc2626; outline: none; }
+  .purge svg { width: 15px; height: 15px; fill: currentColor; display: block; }
+  .purge:disabled { opacity: .5; cursor: default; color: var(--muted); border-color: var(--line); }
   .path .free { white-space: nowrap; }
   .path .free.low { color: #b45309; font-weight: 600; }
   @media (prefers-color-scheme: dark) { .path .free.low { color: #fbbf24; } }
@@ -527,7 +544,15 @@
   <section class="card">
     <h2>Recent drops</h2>
     <div id="recent"><p class="empty">Nothing yet — uploads will appear here.</p></div>
-    <p class="path" style="margin-top:18px">Saving to <span id="root-path">{{.Root}}</span><span class="free" id="free"></span></p>
+    <div class="dropsfoot">
+      <p class="path">Saving to <span id="root-path">{{.Root}}</span><span class="free" id="free"></span></p>
+      <button type="button" class="purge" id="purge" hidden>
+        <span id="purge-label">Purge all</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 3h6a1 1 0 0 1 1 1v1h4a1 1 0 1 1 0 2h-1v12a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V7H4a1 1 0 0 1 0-2h4V4a1 1 0 0 1 1-1Zm-2 4v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7H7Zm3 3a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Zm4 0a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Z"/>
+        </svg>
+      </button>
+    </div>
   </section>
 
   <footer class="foot">
@@ -647,6 +672,7 @@ function refresh() {
     }
 
     showFreeSpace(data);
+    showPurge(data);
 
     if (!rows.length && !active.length) {
       box.innerHTML = '<p class="empty">Nothing yet — uploads will appear here.</p>';
@@ -774,6 +800,53 @@ function showFreeSpace(data) {
   el.className = 'free' + (data.low ? ' low' : '');
   el.title = data.low ? 'Uploads are being refused until there is more room here.' : '';
 }
+
+// Emptying the drop folder in one go. The button hides itself when there is
+// nothing to empty, and knows how many folders there really are - the list is
+// capped at ten by default, and someone clearing out months of drops should be
+// told the true number before they agree to it, not the number on screen.
+var purgeTotal = 0;
+var purgeBytes = 0;
+function showPurge(data) {
+  var btn = document.getElementById('purge');
+  purgeTotal = data.total || 0;
+  purgeBytes = data.total_bytes || 0;
+  btn.hidden = purgeTotal === 0;
+
+  // The size is the whole point of putting it here: what you get back.
+  document.getElementById('purge-label').textContent = 'Purge all  ·  ' + fmt(purgeBytes);
+  btn.title = 'Delete ' + (purgeTotal === 1 ? 'the one drop folder' : 'all ' + purgeTotal + ' drop folders') +
+    ' in ' + document.getElementById('root-path').textContent;
+}
+
+(function () {
+  var btn = document.getElementById('purge');
+  btn.onclick = function () {
+    var many = purgeTotal === 1
+      ? 'the 1 drop folder'
+      : 'all ' + purgeTotal + ' drop folders';
+    if (!confirm('Delete ' + many + ' in ' + document.getElementById('root-path').textContent +
+                 ', and everything inside them?\n\n' +
+                 'That is ' + fmt(purgeBytes) + ', and it cannot be undone.')) return;
+
+    btn.disabled = true;
+    fetch('/purge', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        // Only ever a batch still being uploaded into, which is left alone
+        // rather than pulled out from under the phone sending it.
+        if (d.skipped) {
+          alert('Deleted ' + d.removed + '; left ' + d.skipped +
+                ' alone because files are still arriving in ' + (d.skipped === 1 ? 'it' : 'them') + '.');
+        } else if (d.failed) {
+          alert('Deleted ' + d.removed + '; ' + d.failed + ' could not be removed.');
+        }
+        refresh();
+      })
+      .catch(function () { btn.disabled = false; });
+  };
+})();
 
 var pollTimer = null;
 function schedule(ms) {
