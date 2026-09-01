@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -74,7 +73,7 @@ try {
 // refreshExecPathOnce re-reads the PATH from the registry at most once for the
 // life of the process, for the case where something was installed before this
 // program started but after the PATH it inherited was handed to it.
-var refreshExecPathOnce = sync.OnceFunc(refreshPathFromRegistry)
+var refreshExecPathOnce = onceFunc(refreshPathFromRegistry)
 
 // refreshPathFromRegistry rebuilds PATH from where Windows actually keeps it,
 // rather than from what this process was handed when it started.

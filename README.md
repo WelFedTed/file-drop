@@ -32,6 +32,16 @@ go build -o builds/file-drop.exe .
 .\builds\file-drop.exe
 ```
 
+Windows 10 or later. On Windows 7, 8 or 8.1, take `file-drop-win7.exe` from the
+[releases](https://github.com/WelFedTed/file-drop/releases) instead — the same
+program, built by the last Go toolchain that targets those machines, and it
+updates itself from that asset rather than the ordinary one. The releasing
+section below has the details.
+
+Only the machine *receiving* files needs any of this. Whatever is sending them
+just opens a web page, so an old machine can always be the client of a newer one
+without installing anything.
+
 It prints a scannable QR code straight into the terminal, along with:
 
 | | |
@@ -161,15 +171,63 @@ repository and the version links to the releases.
 
 ### Releasing
 
-Each release publishes exactly two assets: `file-drop.exe` and a `checksums.txt`
-listing its SHA-256. The name never carries the version — the updater and any
-shortcut both depend on it staying put.
+Each release publishes three assets: `file-drop.exe`, `file-drop-win7.exe` and a
+`checksums.txt` listing the SHA-256 of both. The names never carry the version —
+the updater and any shortcut both depend on them staying put.
 
 ```bash
 # 1. set `const version` in version.go, then
 go run ./tools/mksyso                       # regenerate the Windows resources
-go build -trimpath -ldflags "-s -w" -o builds/file-drop.exe .
-sha256sum builds/file-drop.exe              # into checksums.txt as "<sum>  file-drop.exe"
+go build -trimpath -ldflags "-s -w" -o builds/release/file-drop.exe .
+
+# 2. the build for Windows 7 and 8 - see below
+go run ./tools/mksyso -name file-drop-win7.exe
+go1.20.14 build -modfile=go120.mod -trimpath \
+  -ldflags "-s -w -X main.releaseAsset=file-drop-win7.exe" \
+  -o builds/release/file-drop-win7.exe .
+go run ./tools/mksyso                       # put the resource back as it was
+
+# 3. both sums, in one file, each as "<sum>  <name>"
+cd builds/release && sha256sum file-drop.exe file-drop-win7.exe > checksums.txt
+```
+
+`git status` should be clean afterwards: step 2 rewrites the committed resource
+and puts it back byte for byte.
+
+**Both assets must go in every release.** A legacy install checks the same
+releases as everyone else, so a release missing `file-drop-win7.exe` offers those
+users an update they cannot take.
+
+### The build for Windows 7 and 8
+
+Go dropped Windows 7, 8 and 8.1 in Go 1.21. Binaries built since then declare
+Windows 10 in their PE header, and Windows itself refuses to load them on
+anything older — before a line of this program runs, so nothing here can work
+around it.
+
+The second artifact is the same source built by Go 1.20.14, the last toolchain
+that targets those machines. Install it once with:
+
+```bash
+go install golang.org/dl/go1.20.14@latest && go1.20.14 download
+```
+
+Two things keep the arrangement honest. `go120.mod` is a copy of `go.mod`
+declaring `go 1.20`, because that toolchain refuses to compile a module that
+asks for anything newer — the real `go.mod` is left alone, so the primary build
+keeps current language semantics rather than quietly reverting to 1.20 ones.
+And `-X main.releaseAsset=file-drop-win7.exe` points that build's updater at its
+own asset, so a machine that cannot run the ordinary build never downloads one;
+it says which build it is under `File Drop is running`.
+
+Keep `go120.mod` in step with `go.mod` if a dependency ever changes; `go120.sum`
+is a copy of `go.sum`.
+
+To check an artifact really targets what it claims, read the required OS out of
+its header — `10.0` for the ordinary build, `6.1` for the legacy one:
+
+```bash
+powershell -c "$f=[IO.File]::OpenRead('builds/release/file-drop-win7.exe'); $b=[IO.BinaryReader]::new($f); $f.Seek(0x3C,'Begin')>$null; $p=$b.ReadInt32(); $f.Seek($p+64,'Begin')>$null; ''+$b.ReadUInt16()+'.'+$b.ReadUInt16()"
 ```
 
 `tools/mksyso` writes `rsrc_windows_amd64.syso`, which carries two things: the

@@ -661,7 +661,13 @@ func main() {
 		fmt.Print("\n")
 	}
 	fmt.Printf("  File Drop is running\n\n")
-	fmt.Printf("  Version:                       %s\n", version)
+	if legacyBuild() {
+		// Worth saying, because this one is only wanted on machines that cannot
+		// run the ordinary build, and it is otherwise indistinguishable.
+		fmt.Printf("  Version:                       %s (Windows 7 and 8 build)\n", version)
+	} else {
+		fmt.Printf("  Version:                       %s\n", version)
+	}
 	if cfg.InternetOnly {
 		fmt.Printf("  Send over Local Area Network:  off (internet only)\n")
 	} else {
@@ -707,7 +713,7 @@ func main() {
 	// One way out, however it is asked for: Ctrl+C in the console, or Quit on
 	// the tray menu. Both have to take the tunnel down with them rather than
 	// leaving cloudflared holding a public address open.
-	shutdown := sync.OnceFunc(func() {
+	shutdown := onceFunc(func() {
 		if tunnel != nil {
 			log.Printf("closing the tunnel")
 			tunnel.Process.Kill()

@@ -18,14 +18,35 @@ import (
 
 // Updating in place, from the releases published on GitHub.
 //
-// Every release carries two assets: the executable, always under the same name
-// so that neither this code nor anyone's shortcut has to know the version, and
-// a checksums file listing its SHA-256. The download is only ever written to
-// disk after it has been hashed and matched against that list, and a release
-// without the list is refused rather than trusted - a build that cannot be
-// checked is not one to replace a working program with.
+// Every release carries the executables - one per supported line of Windows,
+// each always under the same name so that neither this code nor anyone's
+// shortcut has to know the version - and a checksums file listing their
+// SHA-256. The download is only ever written to disk after it has been hashed
+// and matched against that list, and a release without the list is refused
+// rather than trusted: a build that cannot be checked is not one to replace a
+// working program with.
+
+// releaseAsset is the one this build updates itself from, and it is a variable
+// because there is more than one. Releases carry a second executable for
+// Windows 7 and 8, built with an older toolchain, and an install of that must
+// keep taking that one: the ordinary build declares Windows 10 in its headers
+// and would not start there. The legacy build is linked with
+//
+//	-X main.releaseAsset=file-drop-win7.exe
+//
+// so each build follows its own line of releases. Nothing else about them
+// differs. See the release steps in the README.
+var releaseAsset = "file-drop.exe"
+
+// legacyAsset is what the Windows 7 and 8 build is published as, and so what
+// releaseAsset is set to in that build.
+const legacyAsset = "file-drop-win7.exe"
+
+// legacyBuild reports whether this is that build, which is worth saying out
+// loud on a machine where it is not the one you want.
+func legacyBuild() bool { return releaseAsset == legacyAsset }
+
 const (
-	releaseAsset  = "file-drop.exe"
 	checksumAsset = "checksums.txt"
 
 	// Long enough for a slow line, short enough that nothing hangs on it: the
