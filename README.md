@@ -73,8 +73,9 @@ them.
 > from then on. Nothing is deleted for you.
 
 The drop folder, the batch limit, the free-space reserve, how many drops are
-listed, the arrival chime and the Explorer pop-up take effect the moment you
-save. The listeners, the QR codes, the tunnel and the tray icon are built once at
+listed, the arrival chime, the light or dark look and the Explorer pop-up take
+effect the moment you save — a second `/host` left open elsewhere catches up
+within a few seconds, without being reloaded. The listeners, the QR codes, the tunnel and the tray icon are built once at
 start-up, so changing the port, the QR address, the tray icon or anything about
 the internet link needs a
 restart — those fields are marked **restart to apply**, and the panel tells you
@@ -87,6 +88,13 @@ not mean going back to a terminal you may have closed. It refuses while the form
 has unsaved edits, rather than discarding them; save first, or reopen the panel
 to get the stored values back. The page waits for the server to come back and
 reloads itself.
+
+**Light or dark** is under *On this machine*. `auto` follows whatever the browser
+showing `/host` is set to, which is what it has always done; `light` and `dark`
+override that, for a machine whose screen is on a wall in a bright room, or one
+sitting in the corner of a dark one. It applies to `/host` only — the upload page
+clients see follows their own device, so a phone in the dark is not handed a
+white screen on your say-so.
 
 The file is plain TOML with a comment above every key, so it can just as well be
 edited by hand:
@@ -117,6 +125,7 @@ falls back to the default.
 | `-auto-delete` | `auto_delete` | `false` | Delete drop folders older than the age below |
 | `-auto-delete-days` | `auto_delete_days` | `30` | How old a drop folder must be before that removes it (1-3650) |
 | `-open` | `open` | `true` | Open each finished batch in Explorer (`-open=false` to stop) |
+| `-theme` | `theme` | `auto` | How `/host` looks: `auto`, `light` or `dark` |
 | `-notify` | `notify` | `true` | Announce an arriving batch: a chime on `/host` and a notification by the clock |
 | `-tray` | `tray` | `true` | Show a File Drop icon in the notification area |
 | `-start-hidden` | `start_hidden` | `false` | Start with no console window, leaving only that icon |
@@ -473,8 +482,9 @@ service or a scheduled task with no interactive session, the files still arrive
 and nothing pops up.
 
 On `/host`, every folder in **Recent drops** is clickable and opens that batch in
-Explorer. A browser will not follow a `file://` link from an `http://` page, so
-the click goes back to the server, which opens the window itself.
+Explorer, and so is the **drop folder itself** on the `Saving to` line beneath
+them. A browser will not follow a `file://` link from an `http://` page, so the
+click goes back to the server, which opens the window itself.
 
 Each row also has a **trash icon** that deletes that folder and everything in
 it. It asks first, naming the folder and how many files are in it, because the

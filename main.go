@@ -63,6 +63,7 @@ var (
 	flagAutoDelete     = flag.Bool("auto-delete", false, "delete drop folders once they are older than -auto-delete-days")
 	flagAutoDeleteDays = flag.Int("auto-delete-days", defaultDeleteDays, "how old a drop folder has to be before -auto-delete removes it")
 	flagOpen           = flag.Bool("open", defaultOpen, "open each finished batch in Windows Explorer")
+	flagTheme          = flag.String("theme", defaultTheme, "how /host looks: auto, light or dark")
 	flagNotify         = flag.Bool("notify", defaultNotify, "announce an arriving batch with a chime on /host and a tray notification")
 	flagTray           = flag.Bool("tray", defaultTray, "show a File Drop icon in the Windows notification area")
 	flagStartHidden    = flag.Bool("start-hidden", false, "start without a console window, leaving only the tray icon")
@@ -224,8 +225,11 @@ func main() {
 		hostMu.RLock()
 		defer hostMu.RUnlock()
 		data := map[string]string{
-			"URL":     publicURL,
-			"Root":    currentSettings().Dir,
+			"URL":  publicURL,
+			"Root": currentSettings().Dir,
+			// Empty for "auto", which is the absence of a choice rather than a
+			// third look: the page then follows the browser as it always did.
+			"Theme":   explicitTheme(currentSettings().Theme),
 			"Version": version,
 			"Repo":    "https://github.com/" + updateRepo,
 			// Releases are where the changelog actually lives: every one of
@@ -301,6 +305,10 @@ func main() {
 			"total":       total,
 			"total_bytes": totalBytes,
 			"active":      active,
+			// Both of these can be changed from the panel without a restart, so
+			// the page is told them rather than keeping what the template said.
+			"root":  cfg.Dir,
+			"theme": cfg.Theme,
 			// So the page knows whether to make a noise about an arrival, which
 			// is a setting it would otherwise only learn by opening the cog.
 			"notify": cfg.Notify,
@@ -551,12 +559,22 @@ func main() {
 	// will not follow a file:// link from an http:// page, so the click comes
 	// back here and the server opens Explorer itself.
 	mux.HandleFunc("/open", func(w http.ResponseWriter, r *http.Request) {
+		root := currentSettings().Dir
+
+		// No folder named means the drop folder itself, which is what the path
+		// under the list opens.
 		name := r.URL.Query().Get("folder")
-		if name == "" || name != filepath.Base(name) || name == "." || name == ".." {
+		if name == "" {
+			log.Printf("opening %s", root)
+			openFolder(root)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		if name != filepath.Base(name) || name == "." || name == ".." {
 			http.Error(w, "not a batch folder name", http.StatusBadRequest)
 			return
 		}
-		root := currentSettings().Dir
 		dir := filepath.Join(root, name)
 		if !within(root, dir) {
 			http.Error(w, "not a batch folder name", http.StatusBadRequest)
@@ -1525,6 +1543,17 @@ func lanIP() (string, error) {
 		return "", errors.New("no active network adapter with an IPv4 address")
 	}
 	return best, nil
+}
+
+// explicitTheme is the theme to stamp on the page, or nothing at all when the
+// operator has not chosen one. "auto" is not a look to apply: it means letting
+// the browser's own light or dark setting through, which is what the stylesheet
+// does when no choice is stamped.
+func explicitTheme(theme string) string {
+	if theme == "light" || theme == "dark" {
+		return theme
+	}
+	return ""
 }
 
 // plural is the "s" on the end of a count, which several messages here need.

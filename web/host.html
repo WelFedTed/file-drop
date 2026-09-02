@@ -1,22 +1,31 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>File Drop — scan to send</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <style>
+  /* Light is the plain case. Dark arrives two ways: because the browser asks
+     for it and the operator has not said otherwise, or because they have. The
+     block is written twice rather than once behind a comma, because a selector
+     a browser cannot parse takes the whole rule with it. */
   :root {
     --bg: #f4f5f7; --card: #fff; --ink: #16181d; --muted: #6b7280;
     --line: #e3e5ea; --accent: #2563eb;
     --shadow: 0 1px 2px rgba(16,24,40,.05), 0 12px 32px rgba(16,24,40,.07);
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #0f1115; --card: #171a21; --ink: #eceef2; --muted: #9aa2b1;
       --line: #272b34; --accent: #4f83f1;
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.35);
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --card: #171a21; --ink: #eceef2; --muted: #9aa2b1;
+    --line: #272b34; --accent: #4f83f1;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.35);
   }
   * { box-sizing: border-box; }
   /* The hidden attribute is only "display: none" in the browser's own
@@ -120,7 +129,8 @@
   .purge:disabled { opacity: .5; cursor: default; color: var(--muted); border-color: var(--line); }
   .path .free { white-space: nowrap; }
   .path .free.low { color: #b45309; font-weight: 600; }
-  @media (prefers-color-scheme: dark) { .path .free.low { color: #fbbf24; } }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .path .free.low { color: #fbbf24; } }
+  :root[data-theme="dark"] .path .free.low { color: #fbbf24; }
 
   /* A batch still arriving, and one that just did. Between them these are the
      only two things on this page that move on their own, so they are worth
@@ -209,6 +219,11 @@
   .sheet-body { padding: 4px 22px; max-height: min(62vh, 560px); overflow-y: auto; }
   fieldset { border: 0; padding: 18px 0; margin: 0; border-bottom: 1px solid var(--line); }
   fieldset:last-of-type { border-bottom: 0; }
+  /* A group within a group: the theme choice belongs under "On this machine"
+     rather than pretending to be a section of its own, so it takes no rule
+     across the panel and its heading is not shouted in capitals. */
+  fieldset.inner { padding: 16px 0 0; border-bottom: 0; }
+  fieldset.inner legend { text-transform: none; letter-spacing: 0; font-weight: 600; }
   legend {
     padding: 0; font-size: 13px; font-weight: 650; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted);
@@ -274,7 +289,8 @@
   .sheet-foot button:disabled { opacity: .55; cursor: default; }
   .msg { margin: 0 22px 16px; font-size: 14px; color: var(--muted); }
   .msg.bad { color: #c0392b; }
-  @media (prefers-color-scheme: dark) { .msg.bad { color: #ff8a7a; } }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .msg.bad { color: #ff8a7a; } }
+  :root[data-theme="dark"] .msg.bad { color: #ff8a7a; }
   .msg.good { color: var(--accent); }
 </style>
 </head>
@@ -397,6 +413,30 @@
           <input name="notify" type="checkbox">
           <span>Announce an arriving batch &mdash; a chime here, and a notification by the clock</span>
         </label>
+
+        <fieldset class="inner">
+          <legend>How this page looks</legend>
+
+          <label class="check">
+            <input name="theme" type="radio" value="auto">
+            <span>Auto &mdash; follow this browser's own light or dark setting</span>
+          </label>
+
+          <label class="check">
+            <input name="theme" type="radio" value="light">
+            <span>Light</span>
+          </label>
+
+          <label class="check">
+            <input name="theme" type="radio" value="dark">
+            <span>Dark</span>
+          </label>
+
+          <span class="hint">
+            The upload page clients see follows their own device instead, so a phone
+            in the dark is not handed a white screen.
+          </span>
+        </fieldset>
 
         <label class="check">
           <input name="tray" type="checkbox">
@@ -545,7 +585,8 @@
     <h2>Recent drops</h2>
     <div id="recent"><p class="empty">Nothing yet — uploads will appear here.</p></div>
     <div class="dropsfoot">
-      <p class="path">Saving to <span id="root-path">{{.Root}}</span><span class="free" id="free"></span></p>
+      <p class="path">Saving to <button type="button" class="openlink" id="root-path"
+        title="Open this folder in File Explorer">{{.Root}}</button><span class="free" id="free"></span></p>
       <button type="button" class="purge" id="purge" hidden>
         <span id="purge-label">Purge all</span>
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -671,6 +712,8 @@ function refresh() {
       }, 3000);
     }
 
+    showRoot(data.root);
+    showTheme(data.theme);
     showFreeSpace(data);
     showPurge(data);
 
@@ -816,8 +859,34 @@ function showPurge(data) {
   // The size is the whole point of putting it here: what you get back.
   document.getElementById('purge-label').textContent = 'Purge all  ·  ' + fmt(purgeBytes);
   btn.title = 'Delete ' + (purgeTotal === 1 ? 'the one drop folder' : 'all ' + purgeTotal + ' drop folders') +
-    ' in ' + document.getElementById('root-path').textContent;
+    ' in ' + dropRoot;
 }
+
+// Where drops are going, and how this page is meant to look. Both can be changed
+// from the panel without a restart, so they are taken from the server on every
+// poll rather than from what the page was built with - which also means a second
+// tab left open follows the change within a few seconds.
+var dropRoot = document.getElementById('root-path').textContent;
+function showRoot(root) {
+  if (!root || root === dropRoot) return;
+  dropRoot = root;
+  document.getElementById('root-path').textContent = dropRoot;
+}
+
+function showTheme(theme) {
+  if (!theme) return;
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', theme);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+}
+
+// The drop folder itself, opened the same way a batch folder is: the browser
+// will not follow a file:// link from here, so the server does it.
+document.getElementById('root-path').onclick = function () {
+  open('', this);
+};
 
 (function () {
   var btn = document.getElementById('purge');
@@ -1008,6 +1077,14 @@ function restartServer(say, onFail) {
 
   function field(name) { return form.elements[name]; }
 
+  function themeChoice() {
+    var picked = 'auto';
+    Array.prototype.forEach.call(form.elements['theme'], function (r) {
+      if (r.checked) picked = r.value;
+    });
+    return picked;
+  }
+
   function routeChoice() {
     var picked = 'both';
     Array.prototype.forEach.call(form.elements['routes'], function (r) {
@@ -1024,6 +1101,9 @@ function restartServer(say, onFail) {
     field('auto_delete').checked = !!s.auto_delete;
     field('auto_delete_days').value = s.auto_delete_days;
     field('open').checked = !!s.open;
+    Array.prototype.forEach.call(form.elements['theme'], function (r) {
+      r.checked = r.value === (s.theme || 'auto');
+    });
     field('notify').checked = !!s.notify;
     field('tray').checked = !!s.tray;
     field('start_hidden').checked = !!s.start_hidden;
@@ -1049,6 +1129,7 @@ function restartServer(say, onFail) {
       auto_delete: field('auto_delete').checked,
       auto_delete_days: Number(field('auto_delete_days').value || 0),
       open: field('open').checked,
+      theme: themeChoice(),
       notify: field('notify').checked,
       tray: field('tray').checked,
       start_hidden: field('start_hidden').checked,
@@ -1240,6 +1321,10 @@ function restartServer(say, onFail) {
       }
       fill(res.data.settings);
       loaded = JSON.stringify(collect());
+      // A change of look should land as the panel says it saved, rather than
+      // whenever the next poll happens to come round.
+      showTheme(res.data.settings.theme);
+      showRoot(res.data.settings.dir);
       var note = pending(res.data.restart);
       say(note ? 'Saved. ' + note : 'Saved.', 'good');
       // The drop folder may have moved, and the page behind the sheet is

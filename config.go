@@ -32,6 +32,7 @@ type Settings struct {
 	AutoDelete     bool   `json:"auto_delete"`
 	AutoDeleteDays int    `json:"auto_delete_days"`
 	Open           bool   `json:"open"`
+	Theme          string `json:"theme"`
 	Notify         bool   `json:"notify"`
 	Tray           bool   `json:"tray"`
 	StartHidden    bool   `json:"start_hidden"`
@@ -53,6 +54,7 @@ const (
 	defaultRecent     = 10
 	defaultDeleteDays = 30
 	defaultOpen       = true
+	defaultTheme      = "auto"
 	defaultNotify     = true
 	defaultTray       = true
 	defaultOpenHost   = true
@@ -81,6 +83,7 @@ func defaultSettings() Settings {
 		// AutoDelete stays false: nothing here removes an upload unless asked.
 		AutoDeleteDays: defaultDeleteDays,
 		Open:           defaultOpen,
+		Theme:          defaultTheme,
 		Notify:         defaultNotify,
 		Tray:           defaultTray,
 		// StartHidden stays false: the first run should show its own window.
@@ -211,6 +214,8 @@ func (s *Settings) applyFlags() {
 			s.AutoDeleteDays = *flagAutoDeleteDays
 		case "open":
 			s.Open = *flagOpen
+		case "theme":
+			s.Theme = *flagTheme
 		case "notify":
 			s.Notify = *flagNotify
 		case "tray":
@@ -267,6 +272,13 @@ func (s *Settings) normalise() error {
 	}
 	if s.MinFreeMB < 0 {
 		return errors.New("the free space to keep cannot be negative - use 0 to stop checking")
+	}
+	s.Theme = strings.ToLower(strings.TrimSpace(s.Theme))
+	if s.Theme == "" {
+		s.Theme = defaultTheme
+	}
+	if s.Theme != "auto" && s.Theme != "light" && s.Theme != "dark" {
+		return fmt.Errorf("%q is not a theme - pick auto, light or dark", s.Theme)
 	}
 	// Hiding the console when nothing else can bring it back would leave the
 	// program running with no way to reach it short of Task Manager.
@@ -377,6 +389,8 @@ func (s Settings) toTOML() []byte {
 		"auto_delete_days", strconv.Itoa(s.AutoDeleteDays))
 	entry("Open each finished batch in Windows Explorer.",
 		"open", strconv.FormatBool(s.Open))
+	entry("How the /host page looks: auto, light or dark.\n# Auto follows whatever this machine's browser is set to.",
+		"theme", tomlString(s.Theme))
 	entry("Announce an arriving batch: a chime on the /host page and, when the\n# tray icon is on, a notification beside the clock.",
 		"notify", strconv.FormatBool(s.Notify))
 	entry("Put a File Drop icon in the notification area, with a menu for the\n# QR page, the drop folder and quitting.",
@@ -426,6 +440,8 @@ func (s *Settings) applyTOML(values map[string]any) error {
 			err = assignInt(&s.AutoDeleteDays, key, value)
 		case "open":
 			err = assignBool(&s.Open, key, value)
+		case "theme":
+			err = assignString(&s.Theme, key, value)
 		case "notify":
 			err = assignBool(&s.Notify, key, value)
 		case "tray":
