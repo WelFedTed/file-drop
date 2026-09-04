@@ -96,6 +96,20 @@
 
   .pick { margin-top: 14px; }
 
+  /* Pasting. The box only appears when the clipboard cannot be read directly,
+     and is a real editable field so that Ctrl+V and the touch "Paste" menu both
+     have somewhere to put things. */
+  .pastebox {
+    margin-top: 14px; padding: 14px 16px; min-height: 56px;
+    border: 2px dashed var(--line); border-radius: 12px;
+    font-size: 15px; color: var(--ink);
+    outline: none; overflow-wrap: anywhere;
+  }
+  .pastebox:focus { border-color: var(--accent); }
+  .pastebox:empty:before { content: attr(data-placeholder); color: var(--muted); }
+  .pastenote { margin: 10px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+  .pastenote.bad { color: var(--bad); }
+
   ul.files { list-style: none; margin: 16px 0 0; padding: 0; }
   ul.files li {
     display: flex; align-items: center; gap: 12px;
@@ -169,6 +183,16 @@
       </svg>
       <p id="dropHint">Tap the button below to choose files</p>
     </div>
+
+    <button class="btn btn-quiet pick" type="button" id="pasteBtn">Paste</button>
+
+    <!-- Where a paste lands when the browser will not hand over the clipboard
+         by itself, which on the local network is most of the time: this page is
+         served over plain HTTP, and the clipboard API is refused outside a
+         secure context. -->
+    <div class="pastebox" id="pasteBox" contenteditable="true" hidden
+         data-placeholder="Press Ctrl+V, or touch and hold, then choose Paste"></div>
+    <p class="pastenote" id="pasteNote" hidden></p>
 
     <button class="btn btn-quiet pick" type="button" id="pickFiles">Choose files</button>
 
@@ -412,6 +436,197 @@
   }
 
   el('pickFiles').onclick = function () { inputAny.click(); };
+
+  // Pasting, by two routes.
+  //
+  // The button asks the browser for the clipboard outright, which is the whole
+  // interaction where it is allowed: one tap, and on a phone the system's own
+  // "Paste" confirmation. It is refused outside a secure context, though, and
+  // this page is usually served over plain HTTP on the local network - so when
+  // that route is closed the button opens a box to paste into instead, which
+  // works anywhere a keyboard or a touch-and-hold menu does.
+  //
+  // Either way the paste event below is what does the actual work, so Ctrl+V
+  // on the page has always worked without pressing anything at all.
+  var pasteBtn = el('pasteBtn');
+  var pasteBox = el('pasteBox');
+  var pasteNote = el('pasteNote');
+  var noteTimer = null;
+
+  function note(text, bad) {
+    clearTimeout(noteTimer);
+    pasteNote.textContent = text;
+    pasteNote.className = 'pastenote' + (bad ? ' bad' : '');
+    pasteNote.hidden = !text;
+    if (text) noteTimer = setTimeout(function () { pasteNote.hidden = true; }, 6000);
+  }
+
+  function hidePasteBox() {
+    pasteBox.textContent = '';
+    pasteBox.hidden = true;
+  }
+
+  function showPasteBox() {
+    pasteBox.hidden = false;
+    pasteBox.focus();
+    note(isDesktop ? 'Press Ctrl+V to paste.' : 'Touch and hold the box, then choose Paste.');
+  }
+
+  // Whether the queue already holds this name, since a pasted screenshot is
+  // called image.png every single time and two of them would otherwise be one.
+  function nameTaken(name, claimed) {
+    var lower = name.toLowerCase();
+    if (claimed.indexOf(lower) !== -1) return true;
+    return queue.some(function (q) { return q.path.toLowerCase() === lower; });
+  }
+
+  // text.txt, then text_01.txt, text_02.txt, and so on.
+  function freeName(base, ext, claimed) {
+    if (!nameTaken(base + ext, claimed)) return base + ext;
+    for (var i = 1; i < 100; i++) {
+      var candidate = base + '_' + (i < 10 ? '0' + i : i) + ext;
+      if (!nameTaken(candidate, claimed)) return candidate;
+    }
+    return base + '_' + Date.now() + ext;
+  }
+
+  // A blob under a name of our choosing. The name has to live on the file
+  // rather than beside it, because the list on this page and the folder it is
+  // saved into both read it from there.
+  function named(blob, name) {
+    try {
+      return new File([blob], name, {
+        type: blob.type || 'application/octet-stream',
+        lastModified: Date.now()
+      });
+    } catch (err) {
+      // Older browsers without the File constructor: a blob answers to enough
+      // of the same questions to go through the queue and the upload.
+      blob.name = name;
+      blob.lastModified = Date.now();
+      return blob;
+    }
+  }
+
+  function addPastedFiles(files) {
+    var claimed = [];
+    var out = [];
+    files.forEach(function (f) {
+      var name = f.name || 'file';
+      if (!f.name || nameTaken(name, claimed)) {
+        var dot = name.lastIndexOf('.');
+        var base = dot > 0 ? name.slice(0, dot) : name;
+        var ext = dot > 0 ? name.slice(dot) : '';
+        name = freeName(base, ext, claimed);
+        f = named(f, name);
+      }
+      claimed.push(name.toLowerCase());
+      out.push(f);
+    });
+    add(out);
+    return out;
+  }
+
+  function addPastedText(text) {
+    if (!text || !text.trim()) return null;
+    var name = freeName('text', '.txt', []);
+    add([named(new Blob([text], { type: 'text/plain' }), name)]);
+    return name;
+  }
+
+  function report(files, textName) {
+    if (textName) {
+      note('Pasted text as ' + textName + '.');
+    } else if (files && files.length === 1) {
+      note('Pasted ' + files[0].name + '.');
+    } else if (files && files.length) {
+      note('Pasted ' + files.length + ' files.');
+    } else {
+      note('There was nothing on the clipboard to paste.', true);
+      return false;
+    }
+    hidePasteBox();
+    return true;
+  }
+
+  // A paste that arrived as an event, which is the only route that sees files
+  // copied from a file manager - they come through whole, names and all.
+  document.addEventListener('paste', function (e) {
+    if (!e.clipboardData) return;
+    e.preventDefault();
+
+    var files = [];
+    var i;
+    if (e.clipboardData.files && e.clipboardData.files.length) {
+      for (i = 0; i < e.clipboardData.files.length; i++) files.push(e.clipboardData.files[i]);
+    } else if (e.clipboardData.items) {
+      for (i = 0; i < e.clipboardData.items.length; i++) {
+        if (e.clipboardData.items[i].kind === 'file') {
+          var f = e.clipboardData.items[i].getAsFile();
+          if (f) files.push(f);
+        }
+      }
+    }
+
+    if (files.length) {
+      report(addPastedFiles(files), null);
+      return;
+    }
+    report(null, addPastedText(e.clipboardData.getData('text/plain')));
+  });
+
+  pasteBtn.onclick = function () {
+    // Asking outright. Anything at all going wrong here - no API, an insecure
+    // origin, permission refused - means falling back to the box rather than
+    // reporting a failure, because the box works in every one of those cases.
+    if (!navigator.clipboard || !navigator.clipboard.read) {
+      showPasteBox();
+      return;
+    }
+
+    navigator.clipboard.read().then(function (items) {
+      var files = [];
+      var text = '';
+      var chain = Promise.resolve();
+
+      items.forEach(function (item) {
+        // Anything that is not plain text is worth having as a file; text is
+        // only read when nothing better turned up.
+        var type = item.types.filter(function (t) { return t.indexOf('text/') !== 0; })[0];
+        if (type) {
+          chain = chain.then(function () {
+            return item.getType(type).then(function (blob) {
+              files.push(named(blob, 'image' + extensionFor(type)));
+            });
+          });
+        } else if (item.types.indexOf('text/plain') !== -1) {
+          chain = chain.then(function () {
+            return item.getType('text/plain').then(function (blob) {
+              return blob.text ? blob.text().then(function (t) { text += t; }) : null;
+            });
+          });
+        }
+      });
+
+      return chain.then(function () {
+        if (files.length) {
+          report(addPastedFiles(files), null);
+          return;
+        }
+        if (!report(null, addPastedText(text))) showPasteBox();
+      });
+    }).catch(function () {
+      showPasteBox();
+    });
+  };
+
+  function extensionFor(type) {
+    var known = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+                  'image/webp': '.webp', 'image/svg+xml': '.svg', 'application/pdf': '.pdf' };
+    if (known[type]) return known[type];
+    var slash = type.indexOf('/');
+    return slash > -1 ? '.' + type.slice(slash + 1).replace(/[^a-z0-9]+/gi, '') : '';
+  }
 
   inputAny.addEventListener('change', function () {
     add(inputAny.files);

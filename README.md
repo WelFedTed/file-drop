@@ -421,6 +421,25 @@ batch, folders keep their structure.
 Phone clients tap the button and send files as they always have; folders are a
 desktop affair.
 
+## Pasting
+
+There is a **Paste** button above **Choose files**, and Ctrl+V works on the page
+whether or not anyone presses it. Files copied in a file manager arrive whole,
+names and all; a copied screenshot arrives as `image.png`, and a second one as
+`image_01.png` rather than quietly replacing the first.
+
+**Text becomes a file.** Paste a link, an address, a serial number or a wall of
+notes and it is queued as `text.txt`, then `text_01.txt`, `text_02.txt` — so
+several pastes are several files rather than one overwriting the next. It is a
+normal file from there on: checksummed, listed, removable before you send.
+
+The button asks the browser for the clipboard outright, which on a phone is one
+tap and the system's own paste confirmation. That only works in a *secure
+context*, though, and the local-network page is served over plain HTTP — so
+where the clipboard cannot be read, the button opens a box to paste into
+instead, which works anywhere Ctrl+V or a touch-and-hold **Paste** menu does.
+The internet route is HTTPS, so there the direct route is used.
+
 Paths are rebuilt defensively: `..` segments are dropped, drive letters and
 reserved characters are neutralised, and every destination is re-checked to be
 inside the batch folder before anything is written. A tree deeper than 16
