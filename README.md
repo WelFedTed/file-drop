@@ -433,19 +433,17 @@ notes and it is queued as `text.txt`, then `text_01.txt`, `text_02.txt` — so
 several pastes are several files rather than one overwriting the next. It is a
 normal file from there on: checksummed, listed, removable before you send.
 
-The button asks the browser for the clipboard outright, which on a phone is one
-tap and the system's own paste confirmation. That only works in a *secure
-context*, though, and the local-network page is served over plain HTTP, where
-`navigator.clipboard` does not exist at all — so the button carries an invisible
-editable layer lying exactly over it. Touching and holding it raises the
-system's own **Paste** menu, which needs neither the API nor a permission, and
-Ctrl+V lands in it too. Nothing is ever left there: pastes are intercepted and
-it is emptied again.
+**Where the button works.** Browsers only hand a page the clipboard in a *secure
+context*. Over the internet route, which is HTTPS, and on this machine's own
+`localhost`, the button is the whole interaction — one tap, and on a phone the
+system's own paste confirmation. On the local-network address, which is plain
+HTTP, `navigator.clipboard` does not exist at all and no page can work around
+it; the button says so rather than appearing to do nothing.
 
-There is no other paste UI, and nothing is said when the direct route is
-refused — the button simply takes the focus and waits, so the hold or the
-keystroke that follows works. The internet route is HTTPS, so there the one tap
-is the whole interaction.
+Ctrl+V is unaffected either way, because a paste the browser delivers itself
+needs no permission and no API. It is also the only route that sees files copied
+in a file manager. So on a laptop everything works everywhere; on a phone on the
+local network, send the client the internet link if they need to paste.
 
 Paths are rebuilt defensively: `..` segments are dropped, drive letters and
 reserved characters are neutralised, and every destination is re-checked to be
