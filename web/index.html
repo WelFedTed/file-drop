@@ -96,19 +96,18 @@
 
   .pick { margin-top: 14px; }
 
-  /* Pasting. The box only appears when the clipboard cannot be read directly,
-     and is a real editable field so that Ctrl+V and the touch "Paste" menu both
-     have somewhere to put things. */
-  .pastebox {
-    margin-top: 14px; padding: 14px 16px; min-height: 56px;
-    border: 2px dashed var(--line); border-radius: 12px;
-    font-size: 15px; color: var(--ink);
-    outline: none; overflow-wrap: anywhere;
+  /* Pasting: one button, with an invisible editable layer lying exactly over
+     it. Nothing here is ever seen - the layer is transparent, has no caret and
+     is emptied after every paste - but it is what lets a touch-and-hold raise
+     the system's own Paste menu on a page that cannot ask for the clipboard. */
+  .pastewrap { position: relative; margin-top: 14px; }
+  .pastewrap .btn { margin-top: 0; }
+  .pastecatch {
+    position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+    border-radius: 12px; overflow: hidden; outline: none;
+    opacity: 0; color: transparent; caret-color: transparent;
+    -webkit-user-select: text; user-select: text;
   }
-  .pastebox:focus { border-color: var(--accent); }
-  .pastebox:empty:before { content: attr(data-placeholder); color: var(--muted); }
-  .pastenote { margin: 10px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
-  .pastenote.bad { color: var(--bad); }
 
   ul.files { list-style: none; margin: 16px 0 0; padding: 0; }
   ul.files li {
@@ -184,15 +183,19 @@
       <p id="dropHint">Tap the button below to choose files</p>
     </div>
 
-    <button class="btn btn-quiet pick" type="button" id="pasteBtn">Paste</button>
+    <div class="pastewrap">
+      <button class="btn btn-quiet" type="button" id="pasteBtn">Paste</button>
 
-    <!-- Where a paste lands when the browser will not hand over the clipboard
-         by itself, which on the local network is most of the time: this page is
-         served over plain HTTP, and the clipboard API is refused outside a
-         secure context. -->
-    <div class="pastebox" id="pasteBox" contenteditable="true" hidden
-         data-placeholder="Press Ctrl+V, or touch and hold, then choose Paste"></div>
-    <p class="pastenote" id="pasteNote" hidden></p>
+      <!-- The button, again, as something a paste can land in. The clipboard
+           API is only offered in a secure context and this page is usually
+           served over plain HTTP on the local network, so where it cannot be
+           asked for the clipboard, touching and holding the button raises the
+           system's own Paste menu instead - which needs no API and no
+           permission. Nothing is ever left in here: pastes are intercepted and
+           it is emptied again. -->
+      <div class="pastecatch" id="pasteCatch" contenteditable="true"
+           inputmode="none" aria-hidden="true" tabindex="-1"></div>
+    </div>
 
     <button class="btn btn-quiet pick" type="button" id="pickFiles">Choose files</button>
 
@@ -449,27 +452,25 @@
   // Either way the paste event below is what does the actual work, so Ctrl+V
   // on the page has always worked without pressing anything at all.
   var pasteBtn = el('pasteBtn');
-  var pasteBox = el('pasteBox');
-  var pasteNote = el('pasteNote');
+  var pasteCatch = el('pasteCatch');
   var noteTimer = null;
 
-  function note(text, bad) {
+  // What happened, said in the line the picker already has rather than in
+  // anything new: a pasted file shows up in the list below on its own, but text
+  // turning into text.txt is worth a word. It goes back to the standard hint by
+  // itself, and on the next redraw regardless.
+  function note(text) {
     clearTimeout(noteTimer);
-    pasteNote.textContent = text;
-    pasteNote.className = 'pastenote' + (bad ? ' bad' : '');
-    pasteNote.hidden = !text;
-    if (text) noteTimer = setTimeout(function () { pasteNote.hidden = true; }, 6000);
+    if (!text) return;
+    dropHint.textContent = text;
+    noteTimer = setTimeout(render, 5000);
   }
 
-  function hidePasteBox() {
-    pasteBox.textContent = '';
-    pasteBox.hidden = true;
-  }
-
-  function showPasteBox() {
-    pasteBox.hidden = false;
-    pasteBox.focus();
-    note(isDesktop ? 'Press Ctrl+V to paste.' : 'Touch and hold the box, then choose Paste.');
+  // Leaves nothing behind: the layer over the button is emptied and let go of,
+  // which on a phone also dismisses the menu the paste came from.
+  function clearCatcher() {
+    pasteCatch.textContent = '';
+    if (document.activeElement === pasteCatch) pasteCatch.blur();
   }
 
   // Whether the queue already holds this name, since a pasted screenshot is
@@ -536,16 +537,16 @@
 
   function report(files, textName) {
     if (textName) {
-      note('Pasted text as ' + textName + '.');
+      note('Pasted text as ' + textName);
     } else if (files && files.length === 1) {
-      note('Pasted ' + files[0].name + '.');
+      note('Pasted ' + files[0].name);
     } else if (files && files.length) {
-      note('Pasted ' + files.length + ' files.');
+      note('Pasted ' + files.length + ' files');
     } else {
-      note('There was nothing on the clipboard to paste.', true);
+      note('Nothing on the clipboard to paste');
       return false;
     }
-    hidePasteBox();
+    clearCatcher();
     return true;
   }
 
@@ -575,12 +576,14 @@
     report(null, addPastedText(e.clipboardData.getData('text/plain')));
   });
 
-  pasteBtn.onclick = function () {
-    // Asking outright. Anything at all going wrong here - no API, an insecure
-    // origin, permission refused - means falling back to the box rather than
-    // reporting a failure, because the box works in every one of those cases.
+  function paste() {
+    // Asking outright, which is the whole interaction where it is allowed.
+    // Anything going wrong - no API, an insecure origin, permission refused -
+    // leaves the layer over the button holding the focus, so that Ctrl+V and
+    // the touch-and-hold menu land somewhere useful without a word being said
+    // about it.
     if (!navigator.clipboard || !navigator.clipboard.read) {
-      showPasteBox();
+      pasteCatch.focus();
       return;
     }
 
@@ -613,12 +616,23 @@
           report(addPastedFiles(files), null);
           return;
         }
-        if (!report(null, addPastedText(text))) showPasteBox();
+        if (!report(null, addPastedText(text))) pasteCatch.focus();
       });
     }).catch(function () {
-      showPasteBox();
+      pasteCatch.focus();
     });
-  };
+  }
+
+  // The layer lies over the button, so it is what a tap actually reaches; the
+  // button itself is here for a keyboard, which tabs to it and presses Enter.
+  pasteCatch.addEventListener('click', paste);
+  pasteBtn.addEventListener('click', paste);
+
+  // Nothing is ever typed into that layer - it exists to be pasted into.
+  pasteCatch.addEventListener('keydown', function (e) {
+    if (!e.ctrlKey && !e.metaKey && e.key && e.key.length === 1) e.preventDefault();
+  });
+  pasteCatch.addEventListener('blur', function () { pasteCatch.textContent = ''; });
 
   function extensionFor(type) {
     var known = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',

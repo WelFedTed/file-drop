@@ -435,10 +435,17 @@ normal file from there on: checksummed, listed, removable before you send.
 
 The button asks the browser for the clipboard outright, which on a phone is one
 tap and the system's own paste confirmation. That only works in a *secure
-context*, though, and the local-network page is served over plain HTTP — so
-where the clipboard cannot be read, the button opens a box to paste into
-instead, which works anywhere Ctrl+V or a touch-and-hold **Paste** menu does.
-The internet route is HTTPS, so there the direct route is used.
+context*, though, and the local-network page is served over plain HTTP, where
+`navigator.clipboard` does not exist at all — so the button carries an invisible
+editable layer lying exactly over it. Touching and holding it raises the
+system's own **Paste** menu, which needs neither the API nor a permission, and
+Ctrl+V lands in it too. Nothing is ever left there: pastes are intercepted and
+it is emptied again.
+
+There is no other paste UI, and nothing is said when the direct route is
+refused — the button simply takes the focus and waits, so the hold or the
+keystroke that follows works. The internet route is HTTPS, so there the one tap
+is the whole interaction.
 
 Paths are rebuilt defensively: `..` segments are dropped, drive letters and
 reserved characters are neutralised, and every destination is re-checked to be
