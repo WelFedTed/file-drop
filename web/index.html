@@ -98,6 +98,23 @@
 
   .paste { margin-top: 14px; }
 
+  /* Typing something in rather than sending a file: the button gives way to a
+     field and the one control that finishes it. */
+  .text { margin-top: 14px; }
+  .textrow { margin-top: 14px; display: flex; gap: 10px; align-items: stretch; }
+  .textrow textarea {
+    flex: 1; min-width: 0;
+    resize: none; overflow: hidden;
+    font: inherit; font-size: 15px; line-height: 1.4;
+    padding: 12px 14px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+    outline: none;
+  }
+  .textrow textarea:focus { border-color: var(--accent); }
+  .textrow textarea::placeholder { color: var(--muted); }
+  .go { flex: none; width: 54px; padding: 0; display: grid; place-items: center; }
+  .go svg { width: 20px; height: 20px; display: block; }
+
   ul.files { list-style: none; margin: 16px 0 0; padding: 0; }
   ul.files li {
     display: flex; align-items: center; gap: 12px;
@@ -170,6 +187,22 @@
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v12"/>
       </svg>
       <p id="dropHint">Tap the button below to choose files</p>
+    </div>
+
+    <button class="btn btn-quiet text" type="button" id="textBtn">Text</button>
+
+    <!-- What the Text button becomes: somewhere to type, and the one control
+         that finishes it. Enter sends, Shift+Enter starts a line. -->
+    <div class="textrow" id="textRow" hidden>
+      <textarea id="textInput" rows="1" placeholder="Type or paste some text"
+                spellcheck="false" autocapitalize="sentences"></textarea>
+      <button class="btn btn-quiet go" type="button" id="textSend"
+              aria-label="Add this text" title="Add this text">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 10 4 15l5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/>
+        </svg>
+      </button>
     </div>
 
     <button class="btn btn-quiet paste" type="button" id="pasteBtn">Paste</button>
@@ -431,6 +464,9 @@
   // file manager, and it means Ctrl+V has always worked on this page without
   // pressing anything.
   var pasteBtn = el('pasteBtn');
+  var textBtn = el('textBtn');
+  var textRow = el('textRow');
+  var textInput = el('textInput');
   var noteTimer = null;
 
   // What happened, said in the line the picker already has rather than in
@@ -507,6 +543,51 @@
     return name;
   }
 
+  // Typing something in. The button gives way to the field, and the field gives
+  // way back once there is a file to show for it - or once it is clear there
+  // will not be, which is what Escape and an empty send both mean.
+  function openText() {
+    textBtn.hidden = true;
+    textRow.hidden = false;
+    growText();
+    textInput.focus();
+  }
+
+  function closeText() {
+    textInput.value = '';
+    textInput.style.height = '';
+    textRow.hidden = true;
+    textBtn.hidden = false;
+  }
+
+  // One line to begin with, and as many as the text needs after that, up to a
+  // point: a pasted page of notes should be visible, not hidden in a slot.
+  function growText() {
+    textInput.style.height = 'auto';
+    textInput.style.height = Math.min(textInput.scrollHeight, 180) + 'px';
+  }
+
+  function sendText() {
+    var name = addPastedText(textInput.value);
+    if (name) note('Added text as ' + name);
+    closeText();
+  }
+
+  textBtn.addEventListener('click', openText);
+  el('textSend').addEventListener('click', sendText);
+  textInput.addEventListener('input', growText);
+  textInput.addEventListener('keydown', function (e) {
+    // Enter finishes it, which is what the arrow on the button is promising.
+    // Shift+Enter is how you get a second line.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendText();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeText();
+    }
+  });
+
   function report(files, textName) {
     if (textName) {
       note('Pasted text as ' + textName);
@@ -525,6 +606,9 @@
   // copied from a file manager - they come through whole, names and all.
   document.addEventListener('paste', function (e) {
     if (!e.clipboardData) return;
+    // Unless it was aimed at the text field, where a paste means what it
+    // usually means and the browser should just put it in.
+    if (textRow.contains(e.target)) return;
     e.preventDefault();
 
     var files = [];

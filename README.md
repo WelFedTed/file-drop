@@ -421,6 +421,17 @@ batch, folders keep their structure.
 Phone clients tap the button and send files as they always have; folders are a
 desktop affair.
 
+## Typing something in
+
+**Text**, at the top of the buttons, turns into a field with one control beside
+it — an arrow that means what it means: press it, or press Enter, and what you
+typed is queued as a file. Shift+Enter starts another line, Escape backs out,
+and the field grows as far as a paragraph or so before it starts scrolling.
+
+It is the same file as a pasted note — `text.txt`, then `text_01.txt` — so a
+Wi-Fi password, an address or a serial number can be sent to the machine without
+finding something to write it in first.
+
 ## Pasting
 
 There is a **Paste** button above **Choose files**, and Ctrl+V works on the page
