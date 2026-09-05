@@ -871,10 +871,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		wantPath string
 		taken    = map[string]bool{}
 		// What each file in this batch was written as, in the order they
-		// arrived. An entry that is a copy of an earlier one names it by its
-		// place in that order: two different files can be sent under the same
-		// name, so a name is not something a copy can safely be pointed at.
-		sentFiles []string
+		// arrived, with the checksum this program read back off its own write.
+		// An entry that is a copy of an earlier one names it by its place in
+		// that order: two different files can be sent under the same name, so
+		// a name is not something a copy can safely be pointed at.
+		sentFiles []savedFile
 	)
 
 	for {
@@ -924,10 +925,10 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				}
 				source := sentFiles[at-1]
 
-				name, size, err := copyInBatch(dir, source, wantPath, taken)
+				name, size, err := copyInBatch(dir, source.Name, wantPath, taken)
 				if err != nil {
 					discardBatch(dir)
-					log.Printf("could not copy %s within the batch: %v", source, err)
+					log.Printf("could not copy %s within the batch: %v", source.Name, err)
 					writeJSON(w, http.StatusInternalServerError, map[string]any{
 						"error": "the computer could not finish saving that batch - please try again",
 					})
@@ -944,8 +945,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				log.Printf("  copied %s from %s (%s)", name, source, humanSize(size))
-				saved = append(saved, savedFile{Name: name, CRC: wantCRC})
+				log.Printf("  copied %s from %s (%s)", name, source.Name, humanSize(size))
+				// The manifest records what this program read off its own
+				// write, so the copy inherits the source's checksum rather
+				// than repeating back the one the browser claimed.
+				saved = append(saved, savedFile{Name: name, CRC: source.CRC})
 				tracked.finishFile()
 				copied++
 				// It is a copy of bytes this batch already checked, so it is as
@@ -984,8 +988,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		name := uniqueName(safeRelPath(rel), taken)
 		// Remembered in arrival order, so a later entry that is the same file
-		// can ask for a copy of this one by its place in the batch.
-		sentFiles = append(sentFiles, name)
+		// can ask for a copy of this one by its place in the batch. Its
+		// checksum is filled in below, once the bytes are on the disk.
+		sentFiles = append(sentFiles, savedFile{Name: name})
 		full := filepath.Join(dir, name)
 		if !within(dir, full) {
 			part.Close()
@@ -1042,6 +1047,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		tracked.finishFile()
 
 		gotCRC := fmt.Sprintf("%08x", sum.Sum32())
+		sentFiles[len(sentFiles)-1].CRC = gotCRC
 		switch {
 		case wantCRC == "":
 			// An older browser that could not hash locally; the file is still
