@@ -285,6 +285,44 @@
     });
   }
 
+  // Whether two files of the same size and checksum really are the same file.
+  //
+  // It reads the beginning, the middle and the end rather than all of it: a
+  // whole comparison of two 4 GB videos would cost more than sending one of
+  // them, and three matching slices on top of a matching size and CRC-32 is
+  // past the point where anything but a file built to collide would get
+  // through - and whoever picked these files could simply have sent that file.
+  function sameBytes(a, b) {
+    if (a.size !== b.size) return Promise.resolve(false);
+
+    var CHUNK = 64 * 1024;
+    var spots = [[0, Math.min(CHUNK, a.size)]];
+    if (a.size > CHUNK * 3) {
+      var middle = Math.floor(a.size / 2 - CHUNK / 2);
+      spots.push([middle, middle + CHUNK]);
+      spots.push([a.size - CHUNK, a.size]);
+    }
+
+    var chain = Promise.resolve(true);
+    spots.forEach(function (spot) {
+      chain = chain.then(function (equal) {
+        if (!equal) return false;
+        return Promise.all([
+          readChunk(a.slice(spot[0], spot[1])),
+          readChunk(b.slice(spot[0], spot[1]))
+        ]).then(function (pair) {
+          var one = new Uint8Array(pair[0]), two = new Uint8Array(pair[1]);
+          if (one.length !== two.length) return false;
+          for (var i = 0; i < one.length; i++) {
+            if (one[i] !== two[i]) return false;
+          }
+          return true;
+        });
+      });
+    });
+    return chain;
+  }
+
   // Walks the file in slices so a 4 GB video never has to sit in memory.
   function crc32(file, onProgress) {
     var CHUNK = 4 * 1024 * 1024;
@@ -784,7 +822,16 @@
 
     // Fingerprint every file first, then upload the CRC alongside each one so
     // the computer can prove it received exactly what left this device.
+    //
+    // The fingerprints are good for a second thing: a batch that holds the same
+    // file twice - the same photo picked from two folders, a logo sitting in
+    // every subfolder of a job - only has to send it once. The later ones travel
+    // as a line naming the first, and the computer copies it there itself, which
+    // costs nothing on a local disk and everything over a phone's uplink.
     var hashed = 0;
+    var sent = {};          // fingerprint -> the file already on its way
+    var sentCount = 0;      // how many files have been put in the body so far
+    var copies = 0;
     var chain = Promise.resolve(new FormData());
 
     queue.forEach(function (entry) {
@@ -795,22 +842,46 @@
           el('sendingDetail').textContent = 'Checking ' + entry.file.name;
         }).then(function (crc) {
           hashed += entry.file.size;
+
           // Both fields must precede their file. The path travels in its own
           // field because a multipart filename cannot carry directories.
-          body.append('path', entry.path);
-          body.append('crc', crc);
-          body.append('files', entry.file, entry.file.name);
-          return body;
+          function send() {
+            body.append('path', entry.path);
+            body.append('crc', crc);
+            body.append('files', entry.file, entry.file.name);
+            sentCount++;
+            sent[entry.file.size + ':' + crc] = { at: sentCount, file: entry.file };
+            return body;
+          }
+
+          var first = sent[entry.file.size + ':' + crc];
+          if (!first) return send();
+
+          // Same size and same checksum is not quite the same file: a CRC-32 is
+          // 32 bits, and standing in the wrong file's place is a worse failure
+          // than sending a few bytes twice. Read some of both before believing
+          // it.
+          return sameBytes(first.file, entry.file).then(function (same) {
+            if (!same) return send();
+            body.append('path', entry.path);
+            body.append('crc', crc);
+            // Which file to copy, by its place in this batch rather than by its
+            // name: two different files can be sent under the same name, and a
+            // copy must never be able to land on the wrong one.
+            body.append('copy', String(first.at));
+            copies++;
+            return body;
+          });
         });
       });
     });
 
-    chain.then(function (body) { upload(body, bytes); }, function () {
+    chain.then(function (body) { upload(body, bytes, copies); }, function () {
       fail('Could not read those files from this device. Try picking them again.');
     });
   }
 
-  function upload(body, bytes) {
+  function upload(body, bytes, copies) {
     el('barFill').style.width = '0%';
     el('sendingTitle').textContent = 'Uploading ' + queue.length + ' file' + (queue.length === 1 ? '' : 's') + '…';
     el('sendingDetail').textContent = 'Starting…';
@@ -834,9 +905,16 @@
       try { res = JSON.parse(xhr.responseText); } catch (err) { /* fall through to the generic message */ }
       if (xhr.status === 200 && res.ok) {
         el('doneTitle').textContent = res.count + ' file' + (res.count === 1 ? '' : 's') + ' delivered';
-        el('doneDetail').textContent = res.verified === res.count
+        var detail = res.verified === res.count
           ? fmt(bytes) + ' received and checked. Thank you!'
           : fmt(bytes) + ' received. Thank you!';
+        // Worth a word, because the progress bar counted fewer bytes than the
+        // batch adds up to and that would otherwise look like a mistake.
+        if (copies) {
+          detail += ' ' + copies + (copies === 1 ? ' file was a duplicate and' : ' files were duplicates and')
+                  + ' did not have to be sent.';
+        }
+        el('doneDetail').textContent = detail;
         el('doneFolder').textContent = res.folder;
         queue = [];
         render();

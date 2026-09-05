@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -865,9 +866,15 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		saved    []savedFile
 		written  int64
 		verified int
+		copied   int
 		wantCRC  string
 		wantPath string
 		taken    = map[string]bool{}
+		// What each file in this batch was written as, in the order they
+		// arrived. An entry that is a copy of an earlier one names it by its
+		// place in that order: two different files can be sent under the same
+		// name, so a name is not something a copy can safely be pointed at.
+		sentFiles []string
 	)
 
 	for {
@@ -896,6 +903,59 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				// directories out of a part's filename, as RFC 7578 requires.
 				value, _ := io.ReadAll(io.LimitReader(part, 4096))
 				wantPath = string(value)
+
+			case "copy":
+				// This entry is the same file as one already in the batch, so
+				// it arrives as a number rather than as bytes: the place of the
+				// file to copy, counting the files this batch has received.
+				// Nothing here is taken on trust - the number only ever indexes
+				// files this program has already written itself.
+				value, _ := io.ReadAll(io.LimitReader(part, 32))
+				part.Close()
+
+				at, convErr := strconv.Atoi(strings.TrimSpace(string(value)))
+				if convErr != nil || at < 1 || at > len(sentFiles) {
+					discardBatch(dir)
+					log.Printf("rejected: a copy of file %q, which this batch has not received", string(value))
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error": "that upload referred to a file that was never sent",
+					})
+					return
+				}
+				source := sentFiles[at-1]
+
+				name, size, err := copyInBatch(dir, source, wantPath, taken)
+				if err != nil {
+					discardBatch(dir)
+					log.Printf("could not copy %s within the batch: %v", source, err)
+					writeJSON(w, http.StatusInternalServerError, map[string]any{
+						"error": "the computer could not finish saving that batch - please try again",
+					})
+					return
+				}
+
+				// The copy is as real as anything else on the disk, so it counts
+				// against the batch limit even though it crossed no network.
+				written += size
+				if limit > 0 && written > limit {
+					discardBatch(dir)
+					log.Printf("rejected: batch over the %d MB limit once its duplicates were copied", cfg.MaxMB)
+					writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": tooBigMessage(limit)})
+					return
+				}
+
+				log.Printf("  copied %s from %s (%s)", name, source, humanSize(size))
+				saved = append(saved, savedFile{Name: name, CRC: wantCRC})
+				tracked.finishFile()
+				copied++
+				// It is a copy of bytes this batch already checked, so it is as
+				// verified as the file it came from - which had a checksum, or
+				// this one would not claim to.
+				if wantCRC != "" {
+					verified++
+				}
+				wantCRC, wantPath = "", ""
+				continue
 			}
 			part.Close()
 			continue
@@ -923,6 +983,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			rel = part.FileName()
 		}
 		name := uniqueName(safeRelPath(rel), taken)
+		// Remembered in arrival order, so a later entry that is the same file
+		// can ask for a copy of this one by its place in the batch.
+		sentFiles = append(sentFiles, name)
 		full := filepath.Join(dir, name)
 		if !within(dir, full) {
 			part.Close()
@@ -1016,8 +1079,13 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		names[i] = f.Name
 	}
 
-	log.Printf("batch complete: %d file(s), %s, %d verified, in %s",
-		len(saved), humanSize(written), verified, filepath.Base(dir))
+	if copied > 0 {
+		log.Printf("batch complete: %d file(s), %s, %d verified, %d copied here rather than sent, in %s",
+			len(saved), humanSize(written), verified, copied, filepath.Base(dir))
+	} else {
+		log.Printf("batch complete: %d file(s), %s, %d verified, in %s",
+			len(saved), humanSize(written), verified, filepath.Base(dir))
+	}
 
 	// Only once the batch is complete and checksum-clean, so a window never
 	// opens on files that are about to be thrown away, and nothing announces a
@@ -1038,6 +1106,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		"bytes":    written,
 		"files":    names,
 		"verified": verified,
+		"copied":   copied,
 	})
 }
 
@@ -1245,6 +1314,59 @@ func newBatchDir(root string) (string, error) {
 			return "", err
 		}
 	}
+}
+
+// copyInBatch duplicates a file the batch has already received, under a new
+// name inside the same batch folder. It is how a batch holding the same file
+// twice is sent once: the second one arrives as a line naming the first, and
+// the copying happens here, on a local disk, rather than over the client's
+// uplink.
+//
+// source has already been through safeRelPath and uniqueName - it is a name
+// this program chose and wrote. rel is the client's, and is put through the
+// same treatment as any other before it is used.
+func copyInBatch(dir, source, rel string, taken map[string]bool) (string, int64, error) {
+	if dir == "" {
+		return "", 0, errors.New("no batch folder yet")
+	}
+	from := filepath.Join(dir, source)
+	if !within(dir, from) {
+		return "", 0, errors.New("the file to copy is not in this batch")
+	}
+
+	if rel == "" {
+		rel = source
+	}
+	name := uniqueName(safeRelPath(rel), taken)
+	to := filepath.Join(dir, name)
+	if !within(dir, to) {
+		return "", 0, errors.New("that copy would land outside the batch folder")
+	}
+	if parent := filepath.Dir(to); parent != dir {
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			return "", 0, err
+		}
+	}
+
+	in, err := os.Open(from)
+	if err != nil {
+		return "", 0, err
+	}
+	defer in.Close()
+
+	out, err := os.Create(to)
+	if err != nil {
+		return "", 0, err
+	}
+	size, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return "", 0, copyErr
+	}
+	if closeErr != nil {
+		return "", 0, closeErr
+	}
+	return name, size, nil
 }
 
 // discardBatch throws away everything a failed upload wrote. A batch is all or

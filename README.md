@@ -490,6 +490,30 @@ If an older browser cannot hash locally, the upload is still accepted and the
 manifest still written; the log line says `no checksum sent` and the success
 screen omits the word "checked".
 
+### The same file twice
+
+Those checksums pay for themselves a second time. A batch often holds the same
+file more than once — the same photo picked from two folders, a logo sitting in
+every subfolder of a job — and there is no reason to send it twice. The first
+copy goes up; the rest travel as a line saying *the same as file 3*, and this
+machine copies it into place itself. Ten copies of a 40 MB video cost 40 MB and
+a disk copy rather than 400 MB over a phone's uplink.
+
+Nothing about the result changes: every file is written, listed in
+`checksums.sfv` with its checksum, and counted. The success screen says how many
+were duplicates, because otherwise the progress bar would have counted fewer
+bytes than the batch adds up to and that would look like a mistake. `-max` still
+measures the whole batch, copies included, so it cannot be slipped past by
+sending one file and asking for it a hundred times.
+
+Two files are only treated as one if they match on **size, CRC-32, and the
+bytes themselves** at the start, middle and end. A CRC-32 is 32 bits, and
+standing in for the wrong file is a far worse failure than sending something
+twice — so the fingerprint proposes and a read confirms. The copy is asked for
+by the file's **place in the batch** rather than its name, because two different
+files can be sent under the same name, and the server only ever indexes files it
+has already written itself.
+
 ## When a batch lands
 
 `/host` says so, twice over. While the files are still coming in, a row appears
