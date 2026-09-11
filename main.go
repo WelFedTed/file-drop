@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	_ "embed"
 
@@ -1478,9 +1479,34 @@ func safeSegment(name string) string {
 		if len(ext) > 20 {
 			ext = ""
 		}
-		name = name[:180-len(ext)] + ext
+		stem := truncateBytes(name, 180-len(ext))
+		// Cutting can expose a trailing space or dot that was in the middle a
+		// moment ago, and Windows strips those from a file name behind your back.
+		stem = strings.TrimRight(stem, " .")
+		if stem == "" {
+			stem = "file"
+		}
+		name = stem + ext
 	}
 	return name
+}
+
+// truncateBytes shortens s to at most n bytes without splitting a character in
+// half. Windows takes a name it cannot decode all the same, substituting a
+// replacement character for the broken part - which leaves the file on disk
+// under a name that no longer matches the one written into the checksum
+// manifest, and defeats the manifest for that file.
+func truncateBytes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // uniqueName keeps two files called IMG_0001.jpg from overwriting each other in
