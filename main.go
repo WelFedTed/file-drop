@@ -1011,6 +1011,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		dst, err := os.Create(full)
 		if err != nil {
 			part.Close()
+			// Like every other way out of here: a batch folder that exists on
+			// disk is a complete batch, never the start of a failed one.
+			discardBatch(dir)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not save " + name})
 			log.Printf("create %s failed: %v", name, err)
 			return
