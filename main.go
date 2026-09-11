@@ -950,6 +950,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				// write, so the copy inherits the source's checksum rather
 				// than repeating back the one the browser claimed.
 				saved = append(saved, savedFile{Name: name, CRC: source.CRC})
+				tracked.startFile(name)
 				tracked.finishFile()
 				copied++
 				// It is a copy of bytes this batch already checked, so it is as
