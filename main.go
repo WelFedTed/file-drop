@@ -626,6 +626,11 @@ func main() {
 		publicPort := cfg.PublicPort
 		if publicPort == 0 {
 			publicPort = cfg.Port + 1
+			if publicPort > 65535 {
+				// The main port is the last one there is, so count down for the
+				// neighbour rather than off the end of the range.
+				publicPort = cfg.Port - 1
+			}
 		}
 		gated := &http.Server{
 			Handler:           publicGate(token, logRequests(mux)),
