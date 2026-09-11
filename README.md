@@ -646,6 +646,15 @@ anyone who can open `/host` can change where uploads land, exactly as they can
 already open folders on your desktop from it. It is not exposed to the internet
 route at all.
 
+Being able to reach the port is one thing; being *sent* there by another website
+is another, and that is not covered by the trade-off above. So every route that
+changes anything — `/upload`, `/settings`, `/delete`, `/purge`, `/update`,
+`/restart`, `/firewall`, `/install-cloudflared` — turns away a POST that a page
+on some other site told the browser to make. A site you merely visit cannot
+empty your drop folder, repoint it, or swap the program on disk. The check reads
+`Sec-Fetch-Site`, falling back to `Origin` on older browsers; something that
+sends neither, `curl` and friends, is not a drive-by and is let through.
+
 The firewall button is in the same bracket: someone else on the LAN could make
 an administrator prompt appear on your screen, but only whoever is sitting at
 that screen can answer it, and the server itself never runs elevated — the

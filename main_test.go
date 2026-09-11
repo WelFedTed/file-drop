@@ -6,6 +6,8 @@ package main
 // on disk.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -76,5 +78,39 @@ func TestSizesCannotOverflow(t *testing.T) {
 	s.MinFreeMB = 1 << 55
 	if err := s.normalise(); err == nil {
 		t.Error("an overflowing reserve was accepted")
+	}
+}
+
+// Nothing that changes anything answers to another website.
+func TestCrossSitePostsRefused(t *testing.T) {
+	handler := sameOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	cases := []struct {
+		what    string
+		method  string
+		headers map[string]string
+		want    int
+	}{
+		{"the page itself", "POST", map[string]string{"Sec-Fetch-Site": "same-origin"}, 204},
+		{"another site", "POST", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+		{"another port on this machine", "POST", map[string]string{"Sec-Fetch-Site": "same-site"}, 403},
+		{"typed into the address bar", "POST", map[string]string{"Sec-Fetch-Site": "none"}, 403},
+		{"an older browser, our page", "POST", map[string]string{"Origin": "http://localhost:8080"}, 204},
+		{"an older browser, elsewhere", "POST", map[string]string{"Origin": "https://example.invalid"}, 403},
+		{"not a browser at all", "POST", nil, 204},
+		{"reading, from anywhere", "GET", map[string]string{"Sec-Fetch-Site": "cross-site"}, 204},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest(c.method, "http://localhost:8080/purge", nil)
+		for k, v := range c.headers {
+			r.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != c.want {
+			t.Errorf("%s: got %d, want %d", c.what, w.Code, c.want)
+		}
 	}
 }

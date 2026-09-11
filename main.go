@@ -20,6 +20,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -664,7 +665,7 @@ func main() {
 			}
 		}
 		gated := &http.Server{
-			Handler:           publicGate(token, logRequests(mux)),
+			Handler:           publicGate(token, sameOrigin(logRequests(mux))),
 			ReadHeaderTimeout: 20 * time.Second,
 		}
 		// Kept so a restart can give this port back before the replacement
@@ -738,7 +739,7 @@ func main() {
 
 	srv = &http.Server{
 		Addr:              addr,
-		Handler:           logRequests(mux),
+		Handler:           sameOrigin(logRequests(mux)),
 		ReadHeaderTimeout: 20 * time.Second,
 		// No read/write timeouts on purpose: a phone on a weak signal can spend a
 		// long while pushing a batch of videos, and cutting it off mid-upload
@@ -1768,6 +1769,62 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(body)
+}
+
+// sameOrigin turns away a request that some other website told the browser to
+// make. Everything that changes anything here answers to a bare POST with no
+// body worth speaking of - /purge empties the drop folder, /update replaces
+// the program on disk, /restart and /firewall act on this desktop - and the
+// server listens on a port any page in any browser on this machine can reach.
+// Without this, a page the operator merely visits could drive all of it.
+//
+// This is a different question from who may reach the port at all, which is
+// deliberately answered "anyone on the LAN": the routes below are still as open
+// as the README says they are. What is refused is another site driving them.
+func sameOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			// Nothing here changes anything on a GET.
+		default:
+			if !requestIsOurs(r) {
+				log.Printf("refused a cross-site %s %s from %s", r.Method, r.URL.Path, clientIP(r))
+				http.Error(w, "That request did not come from the File Drop page.", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestIsOurs reports whether a request came from one of this server's own
+// pages rather than from somewhere else in the browser.
+func requestIsOurs(r *http.Request) bool {
+	// Current browsers stamp this on every request, and a page cannot set it
+	// itself. "none" is a request the user started from the address bar or a
+	// bookmark, which is a thing no POST here is.
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-origin":
+		return true
+	case "cross-site", "same-site", "none":
+		return false
+	}
+
+	// Older browsers, which do not send it. They do send an Origin on a
+	// cross-origin post, which answers the same question a little less exactly.
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Neither header means this is not a browser at all - curl, a script,
+		// something posting to /upload of its own accord. None of those can be
+		// a drive-by, and refusing them would break a legitimate client for no
+		// gain, since anything that can set headers can set these two.
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return u.Host == r.Host
 }
 
 func logRequests(next http.Handler) http.Handler {
