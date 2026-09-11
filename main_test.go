@@ -31,3 +31,35 @@ func TestLongNamesStayReadable(t *testing.T) {
 		t.Errorf("a trailing dot survived the cut: %q", got)
 	}
 }
+
+// Whatever the settings panel can save, the next start has to be able to read.
+func TestSettingsSurviveTheFile(t *testing.T) {
+	s := defaultSettings()
+	s.Dir = "C:\\drop\u0001café"
+	s.Token = "ab\u0007cd"
+	s.Host = "日本"
+
+	values, err := parseTOML(string(s.toTOML()))
+	if err != nil {
+		t.Fatalf("what toTOML wrote, parseTOML would not read: %v", err)
+	}
+	back := defaultSettings()
+	if err := back.applyTOML(values); err != nil {
+		t.Fatal(err)
+	}
+	if back.Dir != s.Dir || back.Token != s.Token || back.Host != s.Host {
+		t.Fatalf("came back as %q / %q / %q", back.Dir, back.Token, back.Host)
+	}
+}
+
+// The escapes that are not ours are still refused, so a hand-edited file with a
+// typo in it says so rather than starting on a value nobody wrote.
+func TestNonsenseEscapesRefused(t *testing.T) {
+	for _, bad := range []string{
+		`"a\q"`, `"a\u12"`, `"a\uZZZZ"`, `"a\UFFFFFFFF"`, `"a\`,
+	} {
+		if _, err := parseTOMLValue(bad); err == nil {
+			t.Errorf("%s was accepted", bad)
+		}
+	}
+}

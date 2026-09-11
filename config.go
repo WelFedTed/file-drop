@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 // Settings is everything the server can be told to do differently. Values come
@@ -601,6 +602,24 @@ func parseTOMLBasicString(s string) (string, error) {
 				b.WriteByte('"')
 			case '\\':
 				b.WriteByte('\\')
+			case 'u', 'U':
+				// tomlString writes a control character this way, so refusing to
+				// read one back would mean writing a settings file that this
+				// program then refuses to start from.
+				width := 4
+				if s[i] == 'U' {
+					width = 8
+				}
+				if i+width >= len(s) {
+					return "", errors.New("that value ends in an unfinished \\u escape")
+				}
+				digits := s[i+1 : i+1+width]
+				n, err := strconv.ParseUint(digits, 16, 32)
+				if err != nil || !utf8.ValidRune(rune(n)) {
+					return "", fmt.Errorf("\\%c%s is not a character number", s[i], digits)
+				}
+				b.WriteRune(rune(n))
+				i += width
 			default:
 				return "", fmt.Errorf("\\%c is not an escape TOML knows", s[i])
 			}
