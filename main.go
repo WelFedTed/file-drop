@@ -325,14 +325,8 @@ func main() {
 	mux.HandleFunc("/batches", func(w http.ResponseWriter, r *http.Request) {
 		cfg := currentSettings()
 		active := activeUploads()
-		growing := map[string]bool{}
-		for _, u := range active {
-			if u.Folder != "" {
-				growing[u.Folder] = true
-			}
-		}
 
-		listed, total, totalBytes := recentBatches(cfg.Dir, cfg.Recent, growing)
+		listed, total, totalBytes := recentBatches(cfg.Dir, cfg.Recent)
 		body := map[string]any{
 			"batches": listed,
 			// What is in the drop root altogether, which is not what is listed:
@@ -1582,27 +1576,32 @@ var batchStats = struct {
 }{m: map[string]batchStat{}}
 
 // statBatch counts a drop folder, from memory where it can. A folder still
-// receiving files is counted afresh and not remembered, because it is still
-// growing.
-func statBatch(root, name string, growing bool) batchStat {
+// being uploaded into is counted afresh every time and never remembered,
+// because the answer is still changing.
+func statBatch(root, name string) batchStat {
 	key := filepath.Join(root, name)
 
-	if !growing {
-		batchStats.Lock()
-		st, ok := batchStats.m[key]
-		batchStats.Unlock()
-		if ok {
-			return st
-		}
+	batchStats.Lock()
+	st, ok := batchStats.m[key]
+	batchStats.Unlock()
+	if ok {
+		return st
 	}
 
-	var st batchStat
+	// Whether this is a finished batch at all. The manifest is the last thing
+	// handleUpload writes, so a folder holding one is a folder nothing is
+	// writing to any more - and that is the only safe moment to remember what
+	// is in it.
+	finished := false
+
+	st = batchStat{}
 	// Walk the tree: a batch can contain uploaded folders, not just files.
 	filepath.WalkDir(key, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 		if filepath.Dir(path) == key && strings.EqualFold(d.Name(), sfvName) {
+			finished = true
 			return nil // the manifest is not one of the client's files
 		}
 		if info, err := d.Info(); err == nil {
@@ -1612,7 +1611,12 @@ func statBatch(root, name string, growing bool) batchStat {
 		return nil
 	})
 
-	if !growing {
+	// Asking the list of uploads in flight instead would not do. That list is a
+	// snapshot taken before the walk started, and an upload that registered the
+	// folder it had just made after the snapshot was taken would be remembered
+	// here at whatever it had written so far - and then reported at that count
+	// for as long as the folder exists.
+	if finished {
 		batchStats.Lock()
 		batchStats.m[key] = st
 		batchStats.Unlock()
@@ -1640,10 +1644,7 @@ func forgetBatchesExcept(root string, names []string) {
 // along with how many there are altogether and what they come to. The list is
 // capped; the button that offers to delete every one of them should name the
 // real number and the real size, not the ones on screen.
-//
-// growing names the folders an upload is still writing into, which are counted
-// afresh rather than from memory.
-func recentBatches(root string, limit int, growing map[string]bool) ([]batch, int, int64) {
+func recentBatches(root string, limit int) ([]batch, int, int64) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, 0, 0
@@ -1663,11 +1664,12 @@ func recentBatches(root string, limit int, growing map[string]bool) ([]batch, in
 	forgetBatchesExcept(root, names)
 
 	// Every folder is counted, because the total is over all of them. Only the
-	// newest few are listed, and all but the growing ones come from memory.
+	// newest few are listed, and all but the ones still arriving come from
+	// memory.
 	stats := make(map[string]batchStat, len(names))
 	var totalBytes int64
 	for _, name := range names {
-		st := statBatch(root, name, growing[name])
+		st := statBatch(root, name)
 		stats[name] = st
 		totalBytes += st.Bytes
 	}
