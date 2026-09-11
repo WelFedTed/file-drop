@@ -63,3 +63,18 @@ func TestNonsenseEscapesRefused(t *testing.T) {
 		}
 	}
 }
+
+// The two sizes that get multiplied up into bytes cannot be given a value that
+// overflows on the way, which would quietly turn a limit into no limit.
+func TestSizesCannotOverflow(t *testing.T) {
+	s := defaultSettings()
+	s.MaxMB = 1 << 55
+	if err := s.normalise(); err == nil {
+		t.Error("an overflowing largest batch was accepted")
+	}
+	s = defaultSettings()
+	s.MinFreeMB = 1 << 55
+	if err := s.normalise(); err == nil {
+		t.Error("an overflowing reserve was accepted")
+	}
+}

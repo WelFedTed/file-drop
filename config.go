@@ -66,6 +66,12 @@ const (
 	// upload that would do that is refused while there is still room to say so.
 	defaultMinFreeMB = 500
 
+	// A ceiling on the two settings that are multiplied up into bytes
+	// elsewhere. Both are far beyond any real disk; the point of the limit is
+	// that neither can overflow an int64 on the way - which would quietly turn
+	// a batch limit into no limit at all.
+	maxSizeMB = 1 << 40
+
 	settingsFile = "file-drop.toml"
 	// What the settings file was called when the program was file-drop-server.
 	// Read when the current name is absent, so a rename of the executable does
@@ -271,8 +277,14 @@ func (s *Settings) normalise() error {
 	if s.MaxMB < 0 {
 		return errors.New("the largest batch cannot be negative - use 0 for no limit")
 	}
+	if s.MaxMB > maxSizeMB {
+		return fmt.Errorf("the largest batch cannot be more than %d MB - use 0 for no limit", int64(maxSizeMB))
+	}
 	if s.MinFreeMB < 0 {
-		return errors.New("the free space to keep cannot be negative - use 0 to stop checking")
+		return errors.New("the free space to keep cannot be negative - use 0 to keep none")
+	}
+	if s.MinFreeMB > maxSizeMB {
+		return fmt.Errorf("the free space to keep cannot be more than %d MB", int64(maxSizeMB))
 	}
 	s.Theme = strings.ToLower(strings.TrimSpace(s.Theme))
 	if s.Theme == "" {
