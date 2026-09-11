@@ -18,9 +18,12 @@ const uploadHeadroom = 8 << 20
 // the drop volume below its reserve. The second result is the sentence to show
 // whoever is trying to send it.
 //
-// It errs towards letting the upload run: a reserve of zero, an unknown size,
-// or a volume that cannot be measured all come back true. The point is to catch
-// the case that is certain to fail, not to police the disk.
+// It errs towards letting the upload run: an unknown size, or a volume that
+// cannot be measured, both come back true. The point is to catch the case that
+// is certain to fail, not to police the disk - which is also why a reserve of
+// zero does not switch the whole thing off. Zero means keep nothing back; a
+// batch with nowhere near enough room to land is still refused, because letting
+// it run would fill the disk and fail part way through regardless.
 func roomFor(root string, minFreeMB, want int64) (bool, string) {
 	if want <= 0 {
 		return true, ""

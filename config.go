@@ -392,7 +392,7 @@ func (s Settings) toTOML() []byte {
 		"host", tomlString(s.Host))
 	entry("Largest single upload batch, in MB. 0 removes the limit.",
 		"max_mb", strconv.FormatInt(s.MaxMB, 10))
-	entry("Refuse a batch that would leave the drop volume with less than this\n# much room, in MB. 0 stops checking altogether.",
+	entry("Refuse a batch that would leave the drop volume with less than this\n# much room, in MB. 0 keeps no reserve - though a batch with nowhere\n# near enough room to land is still turned away.",
 		"min_free_mb", strconv.FormatInt(s.MinFreeMB, 10))
 	entry("How many of the newest drop folders /host lists.",
 		"recent", strconv.Itoa(s.Recent))

@@ -120,7 +120,7 @@ falls back to the default.
 | `-dir` | `dir` | `C:\file-drop` | Where batches are saved |
 | `-host` | `host` | auto | Address baked into the QR code |
 | `-max` | `max_mb` | `0` | Largest single batch, in MB (`0` = no limit) |
-| `-min-free` | `min_free_mb` | `500` | Refuse a batch that would leave the drop disk with less than this many MB free (`0` = do not check) |
+| `-min-free` | `min_free_mb` | `500` | Refuse a batch that would leave the drop disk with less than this many MB free (`0` = keep no reserve; a batch that cannot fit at all is still refused) |
 | `-recent` | `recent` | `10` | How many of the newest drops `/host` lists (1-500) |
 | `-auto-delete` | `auto_delete` | `false` | Delete drop folders older than the age below |
 | `-auto-delete-days` | `auto_delete_days` | `30` | How old a drop folder must be before that removes it (1-3650) |
@@ -612,7 +612,10 @@ did not.
 
 By default the drop volume is kept 500 MB clear — Windows behaves badly on a full
 system disk, and the program most likely to fill one is the one taking whatever a
-phone sends. Change it with `-min-free`, or set it to `0` to stop checking.
+phone sends. Change it with `-min-free`, or set it to `0` to keep nothing back.
+Zero is not quite “stop checking”, though: a batch with nowhere near enough room
+to land is still refused, because letting it run would only fill the disk and
+fail part way through anyway.
 
 `/host` shows the free space beside the drop folder, and turns it amber once it
 is down to the reserve, so an upload refused for want of room is not the first

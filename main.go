@@ -60,7 +60,7 @@ var (
 	flagDir            = flag.String("dir", defaultDir, "root folder that receives the uploaded batches")
 	flagHost           = flag.String("host", "", "address to encode in the QR code (auto-detected LAN IP when empty)")
 	flagMaxMB          = flag.Int64("max", defaultMaxMB, "maximum size of a single upload batch in MB (0 for no limit)")
-	flagMinFreeMB      = flag.Int64("min-free", defaultMinFreeMB, "refuse a batch that would leave the drop volume with less than this many MB free (0 to skip the check)")
+	flagMinFreeMB      = flag.Int64("min-free", defaultMinFreeMB, "refuse a batch that would leave the drop volume with less than this many MB free (0 keeps no reserve; a batch that cannot fit at all is still refused)")
 	flagRecent         = flag.Int("recent", defaultRecent, "how many of the newest drop folders /host lists")
 	flagAutoDelete     = flag.Bool("auto-delete", false, "delete drop folders once they are older than -auto-delete-days")
 	flagAutoDeleteDays = flag.Int("auto-delete-days", defaultDeleteDays, "how old a drop folder has to be before -auto-delete removes it")
