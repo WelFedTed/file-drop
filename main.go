@@ -205,12 +205,45 @@ func main() {
 	})
 
 	// The internet details arrive later, once the tunnel has come up, so the
-	// operator's screen reads them behind a lock.
+	// operator's screen reads them behind a lock. The tunnel process is in here
+	// too: it is started from one goroutine and has to be killed from several
+	// others - Ctrl+C, Quit on the tray menu, the Restart button - and an
+	// unguarded read of it is how a shutdown leaves cloudflared behind, holding
+	// a public address open onto a port something else can later claim.
 	var (
 		hostMu      sync.RWMutex
 		internetURL string
 		internetQR  []byte
+		tunnelGone  bool
 	)
+
+	// setTunnel records the running client, unless the server is already on its
+	// way down - in which case nothing will come back for it and it is killed
+	// here instead. That window is real: bringing the tunnel up takes the better
+	// part of a minute, and Ctrl+C inside it would otherwise orphan the process.
+	setTunnel := func(cmd *exec.Cmd) {
+		hostMu.Lock()
+		gone := tunnelGone
+		if !gone {
+			tunnel = cmd
+		}
+		hostMu.Unlock()
+		if gone {
+			cmd.Process.Kill()
+		}
+	}
+
+	// killTunnel takes it down, once, whoever asks and whenever they ask.
+	killTunnel := func() {
+		hostMu.Lock()
+		cmd := tunnel
+		tunnel, tunnelGone = nil, true
+		hostMu.Unlock()
+		if cmd != nil {
+			log.Printf("closing the tunnel")
+			cmd.Process.Kill()
+		}
+	}
 
 	// Whether an internet link is on its way at all. Written once below, before
 	// this server starts accepting, and only read afterwards. Local network only
@@ -477,9 +510,7 @@ func main() {
 		// connection this is about to close.
 		go func() {
 			time.Sleep(400 * time.Millisecond)
-			if tunnel != nil {
-				tunnel.Process.Kill()
-			}
+			killTunnel()
 			// Both ports have to be free before the replacement asks for them.
 			srv.Close()
 			if gatedSrv != nil {
@@ -677,7 +708,7 @@ func main() {
 						log.Printf("local uploads are unaffected; use -lan-only to stop trying")
 						return
 					}
-					tunnel = cmd
+					setTunnel(cmd)
 					publish(base)
 					log.Printf("internet link ready: %s", base)
 				}()
@@ -773,10 +804,7 @@ func main() {
 	// the tray menu. Both have to take the tunnel down with them rather than
 	// leaving cloudflared holding a public address open.
 	shutdown := onceFunc(func() {
-		if tunnel != nil {
-			log.Printf("closing the tunnel")
-			tunnel.Process.Kill()
-		}
+		killTunnel()
 		srv.Close()
 		os.Exit(0)
 	})
@@ -799,9 +827,7 @@ func main() {
 	// cannot be asked for a moment before there is anything to answer it.
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
-		if tunnel != nil {
-			tunnel.Process.Kill()
-		}
+		killTunnel()
 		log.Fatalf("cannot listen on port %d: %v", cfg.Port, err)
 	}
 
@@ -810,9 +836,7 @@ func main() {
 	}
 
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		if tunnel != nil {
-			tunnel.Process.Kill()
-		}
+		killTunnel()
 		log.Fatalf("server stopped: %v", err)
 	}
 
