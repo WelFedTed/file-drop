@@ -151,25 +151,36 @@ written by a later version still starts an earlier one.
 ## Updating
 
 At start-up the server asks GitHub once whether a newer release exists. If there
-is one, an **update badge appears in the top left of `/host`**, opposite the
-settings cog; if there is not, nothing appears and nothing is said. Clicking it
-shows what you are running, what is available, and the release notes.
+is one, **`/host` says so in the middle of the screen**: a sheet naming what you
+are running, what is available, and the release notes, with **Cancel** and
+**Update**. If there is not, nothing appears and nothing is said.
 
-**Download and install** fetches the new executable and checks its SHA-256
-against the `checksums.txt` published with the release **before anything on disk
-is touched**. A download that does not match is thrown away, and a release with
-no `checksums.txt` is refused outright rather than trusted — a build that cannot
-be checked is not one to replace a working program with.
+**Update** is the whole job in one press. It fetches the new executable and
+checks its SHA-256 against the `checksums.txt` published with the release
+**before anything on disk is touched**, puts it in place, restarts, and the page
+waits for the new server and reloads itself. A download that does not match is
+thrown away, and a release with no `checksums.txt` is refused outright rather
+than trusted — a build that cannot be checked is not one to replace a working
+program with. If the restart itself fails the update is still in place, and the
+sheet says so rather than reporting a failure: it runs at the next start.
 
 The new build takes the same file name as the old one, so shortcuts, firewall
 rules and the settings file beside it all still point at the right thing.
 Windows will not let a running executable be overwritten, but it will let it be
 renamed, so the old one is moved to `file-drop.exe.old` and deleted at the next
-start. Restart to finish; the page offers the button and reloads itself.
+start.
+
+**Cancel** leaves it alone, and is remembered for as long as the tab is open, so
+restarting for some unrelated reason does not put the same sheet back. An
+**update badge** then sits in the top left of `/host`, opposite the settings cog,
+as the way back to it.
 
 The check at start-up is a snapshot, so the settings panel has a **Check for
 updates** button that asks again — a server left running for a fortnight is
-exactly the one that will not have heard about a release.
+exactly the one that will not have heard about a release. It replaces the
+settings panel with the same sheet, showing what it is waiting for while GitHub
+answers and then either the offer above or that there is nothing newer; whatever
+the answer, acting on it happens where you are already looking.
 
 Turn the whole thing off with `-check-updates=false`, or from the settings
 panel, if you would rather it did not talk to GitHub at all.

@@ -152,10 +152,19 @@ func latestRelease() (release, error) {
 // GitHub is not worth interrupting anyone over: the note is kept for the panel
 // and the server carries on regardless.
 func checkForUpdate() {
+	// What was already downloaded is a fact about the disk, not about this
+	// check, so asking again must not forget it. Checking twice would otherwise
+	// offer to fetch a release that is sitting beside the running program
+	// waiting to be started.
+	was := currentUpdateState()
+
 	state := updateState{Checked: true, Current: version}
 
 	r, err := latestRelease()
 	if err != nil {
+		state.Ready = was.Ready
+		state.Available = was.Available
+		state.Latest, state.URL, state.Notes = was.Latest, was.URL, was.Notes
 		state.Error = err.Error()
 		setUpdateState(state)
 		log.Printf("could not check for updates: %v", err)
@@ -165,6 +174,7 @@ func checkForUpdate() {
 	state.Latest = strings.TrimPrefix(r.TagName, "v")
 	state.URL = r.HTMLURL
 	state.Notes = firstLines(r.Body, 12)
+	state.Ready = was.Ready && was.Latest == state.Latest
 
 	newer, err := newerVersion(version, r.TagName)
 	if err != nil {

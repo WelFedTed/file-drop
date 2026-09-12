@@ -187,6 +187,9 @@
   .badge-btn { left: 18px; right: auto; color: #fff; background: var(--accent); border-color: var(--accent); }
   .badge-btn:hover, .badge-btn:focus-visible { color: #fff; transform: translateY(-2px); }
   .upd-line { margin: 18px 0 6px; font-size: 15px; }
+  /* The same pulsing dot the live-upload rows use, for the same reason: it says
+     "waiting on something", and it stops when the answer arrives. */
+  .upd-asking { display: flex; align-items: center; gap: 10px; }
   /* The browser's own link colour is close to unreadable on the dark sheet. */
   .sheet-body a { color: var(--accent); }
   .upd-notes {
@@ -310,23 +313,38 @@
       <button class="x" type="button" data-update-close aria-label="Close">&#10005;</button>
     </div>
     <div class="sheet-body">
-      <p class="upd-line">
-        This is <strong id="upd-current">…</strong>. The newest release is
-        <strong id="upd-latest">…</strong>.
+      <!-- One sheet, three things it can be saying: that it is asking, that
+           there is nothing to do, or that there is. Only one is ever shown. -->
+      <p class="upd-line upd-asking" id="upd-checking" hidden>
+        <span class="dot" aria-hidden="true"></span>
+        <span>Asking GitHub for the newest release…</span>
       </p>
-      <p class="note"><a id="upd-link" href="#" target="_blank" rel="noopener">Release notes on GitHub</a></p>
-      <pre class="upd-notes" id="upd-notes"></pre>
-      <p class="note">
-        The download is checked against the SHA-256 published with the release
-        before anything is replaced. The program restarts to finish.
+
+      <p class="upd-line" id="upd-none" hidden>
+        This is <strong class="upd-current">…</strong>, and there is nothing newer.
       </p>
+
+      <div id="upd-offer" hidden>
+        <p class="upd-line">
+          This is <strong class="upd-current">…</strong>. The newest release is
+          <strong id="upd-latest">…</strong>.
+        </p>
+        <p class="note"><a id="upd-link" href="#" target="_blank" rel="noopener">Release notes on GitHub</a></p>
+        <pre class="upd-notes" id="upd-notes"></pre>
+        <p class="note">
+          The download is checked against the SHA-256 published with the release
+          before anything is replaced. File Drop then restarts itself, and this
+          page comes back on its own.
+        </p>
+      </div>
     </div>
     <p class="msg" id="upd-msg" hidden></p>
     <div class="sheet-foot">
       <span class="spacer"></span>
-      <button type="button" data-update-close>Not now</button>
-      <button type="button" class="primary" id="upd-go">Download and install</button>
+      <button type="button" data-update-close id="upd-cancel">Cancel</button>
+      <button type="button" class="primary" id="upd-go">Update</button>
       <button type="button" class="danger" id="upd-restart" hidden>Restart to finish</button>
+      <button type="button" class="primary" id="upd-done" data-update-close hidden>Close</button>
     </div>
   </div>
 </dialog>
@@ -953,14 +971,25 @@ function restartServer(say, onFail) {
   });
 }
 
-// Updates. The check itself already ran on the server at start-up, so this only
-// asks what it found; the badge stays hidden unless there is something to say.
-(function () {
-  var btn = document.getElementById('update-btn');
+// Updates. One sheet in the middle of the screen does the whole job: it says
+// what it is doing, and the button that starts an update is the only button
+// that has to be pressed. The badge in the corner is what is left over - a way
+// back to the sheet after it has been dismissed, not the way in.
+var updatePanel = (function () {
+  var badge = document.getElementById('update-btn');
   var dlg = document.getElementById('update');
   var msg = document.getElementById('upd-msg');
+  var title = document.getElementById('update-title');
   var go = document.getElementById('upd-go');
+  var cancel = document.getElementById('upd-cancel');
   var restart = document.getElementById('upd-restart');
+  var done = document.getElementById('upd-done');
+  var panes = {
+    checking: document.getElementById('upd-checking'),
+    none: document.getElementById('upd-none'),
+    offer: document.getElementById('upd-offer')
+  };
+  var shownThisLoad = false;
 
   function say(text, kind) {
     msg.textContent = text || '';
@@ -968,57 +997,157 @@ function restartServer(say, onFail) {
     msg.hidden = !text;
   }
 
-  function show(s) {
-    document.getElementById('upd-current').textContent = s.current;
-    document.getElementById('upd-latest').textContent = s.latest || '—';
-    document.getElementById('upd-notes').textContent = s.notes || '';
-    var link = document.getElementById('upd-link');
-    link.href = s.url || '#';
-    // Already downloaded and checked on an earlier click: all that is left is
-    // to run it.
-    if (s.ready) {
-      go.hidden = true;
-      restart.hidden = false;
-      say('Downloaded and checked. Restart to run it.', 'good');
-    }
+  // Every state is described in one place, so none of them can leave a button
+  // from the last one lying on the sheet.
+  function sheet(pane, heading, buttons) {
+    for (var k in panes) { panes[k].hidden = (k !== pane); }
+    title.textContent = heading;
+    cancel.hidden = !buttons.cancel;
+    go.hidden = !buttons.go;
+    restart.hidden = !buttons.restart;
+    done.hidden = !buttons.done;
+    cancel.disabled = false;
+    go.disabled = false;
+    restart.disabled = false;
+    if (!dlg.open) { dlg.showModal(); }
   }
 
-  fetch('/update').then(function (r) { return r.json(); }).then(function (s) {
-    if (!s.available && !s.ready) return;       // nothing worth a badge
-    btn.hidden = false;
-    show(s);
-  }).catch(function () { /* offline, or the check has not finished */ });
+  function fill(s) {
+    Array.prototype.forEach.call(document.querySelectorAll('.upd-current'), function (el) {
+      el.textContent = s.current;
+    });
+    document.getElementById('upd-latest').textContent = s.latest || '—';
+    document.getElementById('upd-notes').textContent = s.notes || '';
+    document.getElementById('upd-link').href = s.url || '#';
+  }
 
-  btn.onclick = function () {
+  // Dismissing an update is remembered for as long as the tab lives, so a
+  // restart for some unrelated reason does not reopen the same sheet. Asking
+  // for it by hand always works: only the automatic opening is suppressed.
+  function dismissKey(v) { return 'fd-update-dismissed-' + (v || ''); }
+  function dismissed(s) {
+    try { return sessionStorage.getItem(dismissKey(s.latest)) === '1'; } catch (e) { return false; }
+  }
+
+  function offer(s) {
+    fill(s);
     say('');
-    fetch('/update').then(function (r) { return r.json(); }).then(show).catch(function () {});
-    dlg.showModal();
-  };
+    sheet('offer', 'Update available', { cancel: true, go: !s.ready, restart: !!s.ready });
+    if (s.ready) { say('Already downloaded and checked. Restart to run it.', 'good'); }
+  }
+
+  function upToDate(s) {
+    fill(s);
+    say('');
+    sheet('none', 'No update needed', { done: true });
+  }
+
+  function problem(text) {
+    sheet('checking', 'Could not check for updates', { done: true });
+    panes.checking.hidden = true;          // the message below says it instead
+    say(text, 'bad');
+  }
+
+  // The button in the settings panel comes straight here, which is why the
+  // sheet has an asking state at all: the answer takes a round trip to GitHub,
+  // and a button sitting there looking unpressed is worse than a window that
+  // says what it is waiting for.
+  function check() {
+    say('');
+    sheet('checking', 'Checking for updates', { cancel: true });
+    fetch('/update/check', { method: 'POST' }).then(function (r) { return r.json(); })
+      .then(function (s) {
+        if (!dlg.open) { return; }         // cancelled while GitHub was thinking
+        if (s.error) { problem(s.error); return; }
+        if (s.available || s.ready) { badge.hidden = false; offer(s); return; }
+        badge.hidden = true;
+        upToDate(s);
+      })
+      .catch(function () {
+        if (dlg.open) { problem('Could not reach the server.'); }
+      });
+  }
 
   Array.prototype.forEach.call(dlg.querySelectorAll('[data-update-close]'), function (el) {
     el.onclick = function () { dlg.close(); };
   });
 
+  // Closing the offer - by the button, the cross, or Escape - is what counts as
+  // "not now", however it was done.
+  dlg.addEventListener('close', function () {
+    if (panes.offer.hidden) { return; }
+    var v = document.getElementById('upd-latest').textContent;
+    try { sessionStorage.setItem(dismissKey(v), '1'); } catch (e) { /* private window */ }
+  });
+
+  badge.onclick = function () {
+    say('');
+    fetch('/update').then(function (r) { return r.json(); }).then(offer)
+      .catch(function () { problem('Could not reach the server.'); });
+  };
+
+  // One press: download, check it against the SHA-256 GitHub published, put it
+  // in place, and restart into it. The page waits for the new server and
+  // reloads itself, so the last thing on screen is the version that was asked
+  // for rather than a dead tab.
   go.onclick = function () {
     go.disabled = true;
+    cancel.disabled = true;
     say('Downloading and checking… this can take a minute.');
-    fetch('/update', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (s) {
-      go.disabled = false;
-      if (s.error) { say(s.error, 'bad'); return; }
-      show(s);
-    }).catch(function () {
-      go.disabled = false;
-      say('Could not reach the server.', 'bad');
-    });
+    fetch('/update', { method: 'POST' }).then(function (r) { return r.json(); })
+      .then(function (s) {
+        if (s.error) {
+          go.disabled = false;
+          cancel.disabled = false;
+          say(s.error, 'bad');
+          return;
+        }
+        install();
+      })
+      .catch(function () {
+        go.disabled = false;
+        cancel.disabled = false;
+        say('Could not reach the server.', 'bad');
+      });
   };
+
+  // The new program is on the disk by this point, so a restart that fails is
+  // not a failed update - it just has not started yet, and saying that is more
+  // use than an error.
+  function install() {
+    restartServer(
+      function (t) { say(t, 'good'); },
+      function (e) {
+        sheet('offer', 'Update installed', { done: true });
+        say(e + ' The update is in place and will run the next time File Drop starts.', 'bad');
+      }
+    );
+  }
 
   restart.onclick = function () {
     restart.disabled = true;
-    restartServer(
-      function (t) { say(t, 'good'); },
-      function (e) { restart.disabled = false; say(e, 'bad'); }
-    );
+    cancel.disabled = true;
+    install();
   };
+
+  // At start-up the check is still in flight, so this waits for it rather than
+  // asking once and concluding there is nothing. Whatever it finds, the sheet
+  // only opens by itself when there is something to act on.
+  (function poll(tries) {
+    fetch('/update').then(function (r) { return r.json(); }).then(function (s) {
+      if (!s.checked) {
+        if (tries < 24) { setTimeout(function () { poll(tries + 1); }, 1000); }
+        return;
+      }
+      if (!s.available && !s.ready) { return; }
+      badge.hidden = false;
+      if (shownThisLoad || dismissed(s) || dlg.open) { return; }
+      shownThisLoad = true;
+      offer(s);
+    }).catch(function () { /* offline: the badge stays hidden and nothing pops */ });
+  })(0);
+
+  return { check: check };
 })();
 
 // The "Send over Internet" tile when cloudflared is missing. Installing it
@@ -1267,24 +1396,18 @@ function restartServer(say, onFail) {
   // The check at start-up is a snapshot, so this asks again. A server left
   // running for a fortnight is exactly the one that will not have heard about a
   // release, and restarting it just to find out would be a silly requirement.
+  //
+  // It hands over to the update sheet rather than answering in a line of text
+  // down here: whatever the answer turns out to be, acting on it happens there,
+  // and being sent back across the screen to a badge to do it was the worst
+  // part of this. Settings closes, because the reply replaces it.
   document.getElementById('settings-check').onclick = function () {
-    var btn = document.getElementById('settings-check');
-    btn.disabled = true;
-    say('Asking GitHub…');
-    fetch('/update/check', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (s) {
-      btn.disabled = false;
-      if (s.error) { say(s.error, 'bad'); return; }
-      if (s.available) {
-        say('Version ' + s.latest + ' is available — close this and use the button in the top left corner.', 'good');
-        var badge = document.getElementById('update-btn');
-        if (badge) badge.hidden = false;
-        return;
-      }
-      say('Up to date: ' + s.current + ' is the newest release.', 'good');
-    }).catch(function () {
-      btn.disabled = false;
-      say('Could not reach the server.', 'bad');
-    });
+    if (JSON.stringify(collect()) !== loaded) {
+      say('Save your changes first — leaving this panel now would discard them.', 'bad');
+      return;
+    }
+    dlg.close();
+    updatePanel.check();
   };
 
   // Restarting is what makes the "restart to apply" settings actually apply,
