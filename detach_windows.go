@@ -23,13 +23,7 @@ import (
 // console attached and steps aside, leaving the tray icon as the only way in -
 // which is what was asked for.
 
-const (
-	detachedProcess = 0x00000008
-
-	// Set on the copy that has no console, so a spawn that somehow keeps one
-	// cannot turn into a program that starts itself for ever.
-	detachedEnv = "FILE_DROP_DETACHED"
-)
+const detachedProcess = 0x00000008
 
 const detachSupported = true
 
@@ -58,6 +52,7 @@ func startDetached() (bool, error) {
 	if err := cmd.Start(); err != nil {
 		return false, err
 	}
+	tracef("the copy without a console is pid %d", cmd.Process.Pid)
 	// Nothing waits on it: this process is about to end, and the new one is
 	// deliberately no longer a child of anything.
 	go cmd.Wait()

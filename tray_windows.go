@@ -65,12 +65,18 @@ var (
 )
 
 const (
-	wmDestroy   = 0x0002
-	wmClose     = 0x0010
-	wmCommand   = 0x0111
-	wmLButtonUp = 0x0202
-	wmRButtonUp = 0x0205
-	wmApp       = 0x8000
+	wmDestroy = 0x0002
+	wmClose   = 0x0010
+	wmCommand = 0x0111
+
+	// Windows asking every program to close, and then telling it that it is
+	// going to be closed: signing out, shutting down, restarting for an update,
+	// or an installer clearing the way with the Restart Manager.
+	wmQueryEndSession = 0x0011
+	wmEndSession      = 0x0016
+	wmLButtonUp       = 0x0202
+	wmRButtonUp       = 0x0205
+	wmApp             = 0x8000
 
 	// The message the icon sends us when it is clicked.
 	wmTrayCallback = wmApp + 1
@@ -193,6 +199,7 @@ func trayLoop(ready chan<- error) {
 		Instance:  syscall.Handle(instance),
 		ClassName: className,
 	}
+	tracef("tray: registering the window class")
 	if atom, _, err := procRegisterClass.Call(uintptr(unsafe.Pointer(&class))); atom == 0 {
 		ready <- fmt.Errorf("could not register the tray window class: %v", err)
 		return
@@ -210,6 +217,7 @@ func trayLoop(ready chan<- error) {
 		return
 	}
 
+	tracef("tray: window %#x created", hwnd)
 	taskbar, _, _ := procRegisterWinMessage.Call(
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("TaskbarCreated"))))
 
@@ -229,6 +237,7 @@ func trayLoop(ready chan<- error) {
 	tray.mu.Lock()
 	tray.running = true
 	tray.mu.Unlock()
+	tracef("tray: icon added")
 	ready <- nil
 
 	var m winMsg
@@ -242,6 +251,7 @@ func trayLoop(ready chan<- error) {
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
 		procDispatchMessage.Call(uintptr(unsafe.Pointer(&m)))
 	}
+	tracef("tray: message loop ended")
 	removeTrayIcon()
 }
 
@@ -344,6 +354,14 @@ func trayWndProc(hwnd syscall.Handle, message uint32, wparam, lparam uintptr) ui
 		procPostQuitMessage.Call(0)
 		return 0
 
+	case message == wmQueryEndSession:
+		log.Printf("Windows asked File Drop to close: %s", endSessionReason(lparam))
+
+	case message == wmEndSession:
+		if wparam != 0 {
+			noteExit(0, "Windows is closing it: "+endSessionReason(lparam))
+		}
+
 	case taskbarCreated != 0 && message == taskbarCreated:
 		// Explorer restarted and took every tray icon with it.
 		if err := addTrayIcon(hostURL); err != nil {
@@ -354,6 +372,20 @@ func trayWndProc(hwnd syscall.Handle, message uint32, wparam, lparam uintptr) ui
 
 	ret, _, _ := procDefWindowProc.Call(uintptr(hwnd), uintptr(message), wparam, lparam)
 	return ret
+}
+
+// endSessionReason reads the flags Windows sends with a request to close.
+func endSessionReason(lparam uintptr) string {
+	switch {
+	case lparam&0x00000001 != 0:
+		return "an installer or Windows Update needs it closed (Restart Manager)"
+	case lparam&0x80000000 != 0:
+		return "the user is signing out"
+	case lparam&0x40000000 != 0:
+		return "a forced shutdown"
+	default:
+		return "Windows is shutting down or restarting"
+	}
 }
 
 func showTrayMenu(hwnd syscall.Handle) {

@@ -132,6 +132,7 @@ falls back to the default.
 | `-open-host` | `open_host` | `true` | Open `/host` in a browser at start-up (`-open-host=false` to stop) |
 | `-check-updates` | `check_updates` | `true` | Ask GitHub for a newer release at start-up |
 | `-version` | — | — | Print the version and exit |
+| `-log` | — | off | Write a detailed diagnostic log, `file-drop.log`, recording why the program stops — see [When it will not stay running](#when-it-will-not-stay-running) |
 | `-lan-only` | `lan_only` | `false` | Stay on the LAN; publish no internet link at all |
 | `-internet-only` | `internet_only` | `false` | Serve the internet route only; refuse LAN uploads |
 | `-public` | `public` | — | Advertise this HTTPS address instead of starting a tunnel |
@@ -633,6 +634,71 @@ is down to the reserve, so an upload refused for want of room is not the first
 you hear of it. Should the disk fill mid-batch anyway — something else on the
 machine taking the space while files are arriving — the batch is discarded like
 any other failure and the sender is told which failure it was.
+
+## When it will not stay running
+
+If File Drop closes as soon as it opens, or vanishes after a while, start it
+with **`--log`** (`-log` works too) and make it happen again:
+
+```bash
+file-drop.exe --log
+```
+
+Run that from a Command Prompt in the folder holding `file-drop.exe`, or add
+`--log` to the end of a shortcut's **Target**. Everything is written to
+**`file-drop.log` beside the program**; if that folder cannot be written to, it
+goes to `%LOCALAPPDATA%\FileDrop\file-drop.log` instead, and the console says
+where. The log is plain text and is meant to be sent to whoever is helping:
+the internet access code is never written into it.
+
+**Why a window that closes is not always a crash.** Started from Explorer, File
+Drop prints its errors — a port already taken, no network adapter with an
+address, a drop folder it cannot create — into a console window that closes the
+moment the program ends. The log keeps them.
+
+**How it tells being killed apart from failing.** With `--log`, a second copy of
+the program starts alongside the first, with no window, and waits for it to end.
+Windows hands it the exit code however the first one went, and the first one
+always writes down that it is about to stop, and why, before it does. So each
+ending is reported as one of:
+
+| The log says | What happened |
+|---|---|
+| `It said it was going to: …` | File Drop stopped itself, and that line is the reason |
+| `did NOT record that it was going to stop`, exit code `1` or `-1` | Something else ended it with `TerminateProcess` — Task Manager, a script, or security software |
+| `did NOT record…`, exit code `2` | A crash in File Drop itself; the trace naming the line is just above |
+| `did NOT record…`, a code such as `0xC0000005` | A crash at the Windows level, which the log names; often caused by another program's code injected into this one |
+| `EARLIER RUN UNACCOUNTED FOR` | Both copies vanished at once with no record — almost always security software removing every copy of a file it has flagged |
+| `Windows asked File Drop to close` | Signing out, shutting down, or an installer or Windows Update closing programs |
+
+**What else it records.** The Windows version and build; who started the
+program; whether another copy is already running; the program's SHA-256, to
+compare with `checksums.txt` on the release page; whether the file still carries
+the "downloaded from the internet" mark that SmartScreen checks; whether it is
+being run from inside a zip, a USB drive, a network share or OneDrive; every
+network adapter and its addresses; and a check of every Windows function the
+program calls, so a damaged Windows names what is missing rather than crashing
+on it later. If a port cannot be had it names the program holding it, or the
+range Windows has reserved it in for Hyper-V, WSL or Docker.
+
+**Security software.** Once per start, the waiting copy lists the antivirus
+products registered with Windows and whether each is on, and Defender's settings
+that can stop an unfamiliar program — Controlled folder access, attack surface
+reduction rules, cloud block level, Smart App Control. It also lists any DLL
+inside File Drop that did not come with Windows, which is how security products
+watch a program from the inside, and its folder usually names the vendor. Then
+it searches Windows' event logs for anything naming `file-drop.exe`: Defender
+detections and blocks, crash reports, missing-DLL errors, AppLocker and code
+integrity blocks. It searches again straight after any unplanned ending. A few of
+these logs can only be read as an administrator, and the log says when one was
+skipped for that reason; running once as administrator fills them in.
+
+All of this only reads. It uses PowerShell, `wevtutil`, `netstat` and `netsh`,
+starts nothing without `--log`, and does not slow down start-up: the slow parts
+belong to the waiting copy. One thing no log can catch is Windows refusing to
+start the program at all — if `file-drop.log` does not even gain a line saying
+it started, look in **Windows Security → Protection history** and in your
+antivirus's own history or quarantine.
 
 ## Notes on how it behaves
 

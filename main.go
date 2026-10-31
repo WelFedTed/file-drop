@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -73,6 +74,7 @@ var (
 	flagOpenHost       = flag.Bool("open-host", defaultOpenHost, "open the QR code page in a browser at start-up")
 	flagCheckUpdates   = flag.Bool("check-updates", defaultChecks, "ask GitHub for a newer release at start-up")
 	flagVersion        = flag.Bool("version", false, "print the version and exit")
+	flagLog            = flag.Bool("log", false, "write a detailed diagnostic log ("+logFileName+" beside the program) recording why it stops, crashes or is killed")
 
 	flagLanOnly      = flag.Bool("lan-only", false, "stay on the local network: do not publish an internet link")
 	flagInternetOnly = flag.Bool("internet-only", false, "serve the internet route only: refuse uploads from the local network")
@@ -95,24 +97,49 @@ type maxBytesKey struct{}
 var batchMu sync.Mutex
 
 func main() {
+	// First, before anything that could fail: with -log this opens the log and
+	// starts the watcher, and a watcher does nothing else. See diag.go.
+	if target, isWatcher := startDiagnostics(); isWatcher {
+		if diagOn {
+			runWatcher(target)
+		}
+		return
+	}
+
+	step("setting up the console and the job object")
 	useUTF8Console()
 	adoptChildProcesses()
-	flag.Parse()
+
+	// Parsed by hand rather than with flag.Parse, which exits on a bad flag
+	// before anything can record that it did.
+	step("reading the command line")
+	flag.CommandLine.Init(os.Args[0], flag.ContinueOnError)
+	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			exitNow(0, "printed the command-line help")
+		}
+		exitNow(2, "the command line could not be read: "+err.Error())
+	}
 	log.SetFlags(log.Ltime)
+	_ = flagLog // read before parsing, in diag.go
 
 	if *flagVersion {
 		fmt.Println(version)
+		noteExit(0, "printed the version")
 		return
 	}
 
 	// The copy an update left behind, which could not be removed at the time
 	// because it was the program doing the removing.
+	step("tidying up after a previous update")
 	tidyPreviousUpdate()
 
+	step("loading settings")
 	if err := loadSettings(); err != nil {
-		log.Fatalf("%v", err)
+		fatalf("%v", err)
 	}
 	cfg := currentSettings()
+	logSettings(cfg)
 
 	// Starting hidden, if that was asked for. This happens before anything is
 	// bound, opened or checked, because the copy without a console does all of
@@ -120,11 +147,13 @@ func main() {
 	// second cannot start. See detach_windows.go for why it is a new process
 	// rather than a hidden window.
 	if cfg.StartHidden && cfg.Tray && detachSupported {
+		step("starting hidden, if this copy has a console window to get away from")
 		switch handed, err := startDetached(); {
 		case err != nil:
 			log.Printf("note: could not start hidden (%v); carrying on with a console window", err)
 		case handed:
 			fmt.Println("\n  File Drop is starting hidden - look for its icon beside the clock.")
+			noteExit(0, "handed over to the copy without a console window")
 			return
 		}
 	}
@@ -132,6 +161,7 @@ func main() {
 	// Nothing waits on this: an unreachable GitHub must not delay or stop a
 	// server whose whole job is on the local network.
 	if cfg.CheckUpdates {
+		step("asking GitHub for updates, in the background")
 		go checkForUpdate()
 	}
 
@@ -140,8 +170,9 @@ func main() {
 	startBatchSweeper()
 
 	root := cfg.Dir
+	step("creating the drop folder %s", root)
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		log.Fatalf("cannot create drop folder %s: %v", root, err)
+		fatalf("cannot create drop folder %s: %v", root, err)
 	}
 
 	host := cfg.Host
@@ -153,21 +184,24 @@ func main() {
 			host = "localhost"
 		} else {
 			var err error
+			step("finding this machine's address on the local network")
 			host, err = lanIP()
 			if err != nil {
-				log.Fatalf("could not work out this machine's LAN address (%v) - pass one with -host", err)
+				fatalf("could not work out this machine's LAN address (%v) - pass one with -host", err)
 			}
+			tracef("local network address: %s", host)
 		}
 	}
 	publicURL := fmt.Sprintf("http://%s:%d/", host, cfg.Port)
 
+	step("drawing the QR code for %s", publicURL)
 	qr, err := qrcode.New(publicURL, qrcode.Medium)
 	if err != nil {
-		log.Fatalf("could not build the QR code: %v", err)
+		fatalf("could not build the QR code: %v", err)
 	}
 	qrPNG, err := qr.PNG(512)
 	if err != nil {
-		log.Fatalf("could not render the QR code: %v", err)
+		fatalf("could not render the QR code: %v", err)
 	}
 
 	// Keep a printable copy on disk so the code can be stuck on a wall once and
@@ -516,9 +550,9 @@ func main() {
 			if err := relaunch(restartArgs()); err != nil {
 				// Nothing is listening any more, so say plainly that it needs
 				// starting by hand rather than sit here looking alive.
-				log.Fatalf("could not restart: %v - please start it again yourself", err)
+				fatalf("could not restart: %v - please start it again yourself", err)
 			}
-			os.Exit(0)
+			exitNow(0, "restarting: the replacement has started")
 		}()
 	})
 
@@ -633,6 +667,7 @@ func main() {
 	// Skipped when the operator runs their own tunnel: that needs no client.
 	tunnelBin := ""
 	if !cfg.LanOnly && cfg.Public == "" {
+		step("looking for cloudflared")
 		bin, err := cloudflaredPath()
 		if err != nil {
 			noInternet = "cloudflared is not installed"
@@ -641,6 +676,9 @@ func main() {
 			log.Printf("local uploads are unaffected; use -lan-only to stop trying")
 		}
 		tunnelBin = bin
+		if bin != "" {
+			tracef("cloudflared: %s", bin)
+		}
 	}
 
 	if !cfg.LanOnly && noInternet == "" {
@@ -666,11 +704,13 @@ func main() {
 		// tries to take it.
 		gatedSrv = gated
 
+		step("opening the internet listener on 127.0.0.1:%d", publicPort)
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", publicPort))
 		if err != nil {
 			// Not fatal: the local network is the main event and must still work.
 			noInternet = fmt.Sprintf("port %d is not free", publicPort)
 			log.Printf("no internet link - port %d is not free (%v). Local uploads are unaffected.", publicPort, err)
+			explainPort(publicPort)
 		} else {
 			go func() {
 				if err := gated.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -697,6 +737,7 @@ func main() {
 				// the second QR code appears on /host when it is ready.
 				tunnelPending = true
 				go func() {
+					step("starting the cloudflared tunnel")
 					base, cmd, err := startTunnel(tunnelBin, publicPort)
 					if err != nil {
 						log.Printf("no internet link: %v", err)
@@ -801,17 +842,26 @@ func main() {
 	shutdown := onceFunc(func() {
 		killTunnel()
 		srv.Close()
-		os.Exit(0)
+		exitNow(0, "shut down as asked")
 	})
 
+	// SIGTERM is what Windows sends when the console window is closed, or the
+	// session is signed out of or shut down. Left to the default, the program
+	// simply vanished, with the tunnel taken down only by the job object.
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-stop
+		sig := <-stop
+		if sig == os.Interrupt {
+			log.Printf("stopping: Ctrl+C or Ctrl+Break")
+		} else {
+			log.Printf("stopping: the console window was closed, or Windows is signing out or shutting down")
+		}
 		shutdown()
 	}()
 
 	if cfg.Tray && traySupported {
+		step("adding the tray icon")
 		if err := startTray(hostURL, shutdown); err != nil {
 			log.Printf("note: no tray icon (%v)", err)
 		}
@@ -820,19 +870,23 @@ func main() {
 	// Bind before opening the browser rather than handing the whole job to
 	// ListenAndServe: once this returns the socket is accepting, so the page
 	// cannot be asked for a moment before there is anything to answer it.
+	step("listening on %s", srv.Addr)
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
 		killTunnel()
-		log.Fatalf("cannot listen on port %d: %v", cfg.Port, err)
+		explainPort(cfg.Port)
+		fatalf("cannot listen on port %d: %v", cfg.Port, err)
 	}
 
 	if cfg.OpenHost {
+		step("opening %s in the browser", hostURL)
 		openBrowser(hostURL)
 	}
 
+	step("running - start-up finished")
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		killTunnel()
-		log.Fatalf("server stopped: %v", err)
+		fatalf("server stopped: %v", err)
 	}
 
 	// The server was closed on purpose: either Ctrl+C or the Restart button.
@@ -842,6 +896,7 @@ func main() {
 	// The wait is bounded so a shutdown that never completes still ends.
 	time.Sleep(30 * time.Second)
 	log.Printf("shutdown did not finish; exiting anyway")
+	noteExit(0, "shutdown did not finish in time; exiting anyway")
 }
 
 // handleUpload streams each part of the multipart body straight to disk, so a
@@ -1149,7 +1204,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 func randomToken() string {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		log.Fatalf("could not generate an access code: %v", err)
+		fatalf("could not generate an access code: %v", err)
 	}
 	return hex.EncodeToString(b)
 }
