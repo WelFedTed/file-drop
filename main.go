@@ -141,13 +141,22 @@ func main() {
 	cfg := currentSettings()
 	logSettings(cfg)
 
-	// Starting hidden, if that was asked for. This happens before anything is
-	// bound, opened or checked, because the copy without a console does all of
-	// that instead - and two of us listening on one port would only mean the
-	// second cannot start. See detach_windows.go for why it is a new process
-	// rather than a hidden window.
-	if cfg.StartHidden && cfg.Tray && detachSupported {
-		step("starting hidden, if this copy has a console window to get away from")
+	// The port comes first, so that everything after - the address in the QR
+	// code, the internet port beside it - is worked out from the one actually
+	// in use. It is also the only question start-up may ask, and the copy
+	// started hidden below has nowhere to ask it. See port.go.
+	step("claiming port %d", cfg.Port)
+	ln := claimPort(&cfg)
+
+	// Starting hidden, if that was asked for. This happens before anything else
+	// is opened or checked, because the copy without a console does all of that
+	// instead. See detach_windows.go for why it is a new process rather than a
+	// hidden window.
+	if cfg.StartHidden && cfg.Tray && detachSupported && canDetach() {
+		step("starting hidden")
+		// The copy without a console needs the port this one has just made
+		// sure of.
+		ln.Close()
 		switch handed, err := startDetached(); {
 		case err != nil:
 			log.Printf("note: could not start hidden (%v); carrying on with a console window", err)
@@ -155,6 +164,11 @@ func main() {
 			fmt.Println("\n  File Drop is starting hidden - look for its icon beside the clock.")
 			noteExit(0, "handed over to the copy without a console window")
 			return
+		}
+		var err error
+		if ln, err = net.Listen("tcp", listenAddr(cfg, cfg.Port)); err != nil {
+			explainPort(cfg.Port)
+			fatalf("cannot listen on port %d: %v", cfg.Port, err)
 		}
 	}
 
@@ -547,6 +561,10 @@ func main() {
 			}
 			time.Sleep(200 * time.Millisecond)
 
+			// The replacement may ask for the port a moment before this
+			// process has fully let go of it; this tells it to wait a little
+			// rather than conclude the port is taken.
+			os.Setenv(restartingEnv, "1")
 			if err := relaunch(restartArgs()); err != nil {
 				// Nothing is listening any more, so say plainly that it needs
 				// starting by hand rather than sit here looking alive.
@@ -764,16 +782,8 @@ func main() {
 		w.Write(png)
 	})
 
-	// Internet only binds loopback: the operator's own screen still works, but
-	// nothing on the local network can reach the upload page or /upload, and the
-	// tunnel remains the sole way in.
-	addr := fmt.Sprintf(":%d", cfg.Port)
-	if cfg.InternetOnly {
-		addr = fmt.Sprintf("127.0.0.1:%d", cfg.Port)
-	}
-
 	srv = &http.Server{
-		Addr:              addr,
+		Addr:              ln.Addr().String(),
 		Handler:           sameOrigin(logRequests(mux)),
 		ReadHeaderTimeout: 20 * time.Second,
 		// No read/write timeouts on purpose: a phone on a weak signal can spend a
@@ -867,16 +877,10 @@ func main() {
 		}
 	}
 
-	// Bind before opening the browser rather than handing the whole job to
-	// ListenAndServe: once this returns the socket is accepting, so the page
-	// cannot be asked for a moment before there is anything to answer it.
-	step("listening on %s", srv.Addr)
-	ln, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
-		killTunnel()
-		explainPort(cfg.Port)
-		fatalf("cannot listen on port %d: %v", cfg.Port, err)
-	}
+	// The port was bound at the start rather than left to ListenAndServe here:
+	// the socket is already accepting, so the page cannot be asked for a moment
+	// before there is anything to answer it.
+	step("serving on %s", srv.Addr)
 
 	if cfg.OpenHost {
 		step("opening %s in the browser", hostURL)
@@ -1264,7 +1268,7 @@ var tunnelURLPattern = regexp.MustCompile(`https://[a-z0-9][a-z0-9-]*\.trycloudf
 // would be the only visible effect. The flag is appended rather than filtered,
 // because a later occurrence is the one the flag package keeps.
 func restartArgs() []string {
-	return append(append([]string{}, os.Args[1:]...), "-open-host=false")
+	return childArgs("-open-host=false")
 }
 
 // cloudflaredPath finds the tunnel client. It is looked up before anything is

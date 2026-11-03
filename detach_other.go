@@ -6,4 +6,6 @@ package main
 
 const detachSupported = false
 
+func canDetach() bool { return false }
+
 func startDetached() (bool, error) { return false, nil }

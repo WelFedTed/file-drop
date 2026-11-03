@@ -27,21 +27,24 @@ const detachedProcess = 0x00000008
 
 const detachSupported = true
 
+// canDetach reports whether startDetached would hand over: not in the copy
+// without a console, and not when there was no console to get away from.
+func canDetach() bool {
+	return os.Getenv(detachedEnv) != "1" && consoleWindow() != 0
+}
+
 // startDetached launches the console-less copy. The bool reports whether this
 // process has handed over and should now exit.
 func startDetached() (bool, error) {
-	if os.Getenv(detachedEnv) == "1" {
-		return false, nil // this is the copy without a console
-	}
-	if consoleWindow() == 0 {
-		return false, nil // there was nothing to get away from
+	if !canDetach() {
+		return false, nil
 	}
 
 	exe, err := os.Executable()
 	if err != nil {
 		return false, err
 	}
-	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd := exec.Command(exe, childArgs()...)
 	cmd.Dir, _ = os.Getwd()
 	cmd.Env = append(os.Environ(), detachedEnv+"=1")
 	// No console, and out of the job object that would otherwise take the new

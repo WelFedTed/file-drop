@@ -275,11 +275,15 @@ func noteExit(code int, why string) {
 	}
 }
 
-// fatalf is log.Fatalf, with the intent to exit recorded first.
+// fatalf is log.Fatalf, with the intent to exit recorded first - and, when the
+// console window would vanish along with the program, held open until Enter is
+// pressed so the reason can be read.
 func fatalf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	noteExit(1, msg)
-	log.Fatal(msg)
+	log.Print(msg)
+	holdWindowOpen()
+	os.Exit(1)
 }
 
 // exitNow is os.Exit, with the intent recorded first.

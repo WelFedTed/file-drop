@@ -149,6 +149,29 @@ line, rather than being ignored — being quietly served on the wrong port is
 worse than not starting. Keys it does not recognise are skipped, so a file
 written by a later version still starts an earlier one.
 
+### When the port is taken
+
+Another program already listening on the port is the commonest reason File Drop
+cannot start, so it does not just stop:
+
+- **On the default port, 8080**, it moves along — 8081, 8082 and so on until one
+  is free — says which program had 8080, and **saves the port it found** to the
+  settings file, so the address in the QR code stays the same from then on. This
+  is whenever the port is 8080 and was not typed as `-port` on the command line.
+- **On any other port**, or `-port 8080` typed on purpose, moving silently would
+  break whatever that port was chosen for. It puts up a large red error naming
+  the program holding the port and asks whether to use a different one,
+  offering the next free port on Enter. A port chosen here is saved to the
+  settings file — unless it came from `-port`, which would overrule the file
+  next time anyway; then it is used for this run (and its restarts), and the
+  console says to change the shortcut.
+- With nobody at a keyboard to ask — input redirected, or the copy started
+  without a console — it stops with the reason, as before.
+
+Any start-up error in a console window that would close with the program, as
+it does when started from Explorer or a shortcut, now waits for **Enter**
+before closing, so the reason can be read.
+
 ## Updating
 
 At start-up the server asks GitHub once whether a newer release exists. If there
@@ -652,9 +675,10 @@ where. The log is plain text and is meant to be sent to whoever is helping:
 the internet access code is never written into it.
 
 **Why a window that closes is not always a crash.** Started from Explorer, File
-Drop prints its errors — a port already taken, no network adapter with an
-address, a drop folder it cannot create — into a console window that closes the
-moment the program ends. The log keeps them.
+Drop prints its errors — no network adapter with an address, a drop folder it
+cannot create — into a console window it now holds open until Enter is pressed;
+something ending it from outside gives it no such chance. The log keeps them
+either way.
 
 **How it tells being killed apart from failing.** With `--log`, a second copy of
 the program starts alongside the first, with no window, and waits for it to end.

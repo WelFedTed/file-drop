@@ -24,3 +24,9 @@ func startWatcher(survey bool) error { return errors.New("not available on this 
 func runWatcher(arg string) {}
 
 func explainPort(port int) {}
+
+func portHolders(port int) []string { return nil }
+
+func portReservations(port int) []string { return nil }
+
+func portRefused(err error) bool { return errors.Is(err, syscall.EACCES) }

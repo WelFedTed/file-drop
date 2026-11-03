@@ -110,6 +110,9 @@ var (
 	startupSettings Settings
 
 	configPath string
+	// fileSettings is what the settings file said, before the command line
+	// had its say: what to write back when only one value is being changed.
+	fileSettings Settings
 	// configFound is set from a request goroutine when the panel first writes
 	// the file, and read by the banner, so it carries its own guard.
 	configFound atomic.Bool
@@ -176,6 +179,7 @@ func loadSettings() error {
 		return fmt.Errorf("could not read %s: %v", readFrom, err)
 	}
 
+	fileSettings = s
 	s.applyFlags()
 	if err := s.normalise(); err != nil {
 		return err

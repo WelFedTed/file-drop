@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -51,11 +52,11 @@ const (
 // names the culprit. main_test.go keeps this list honest against the source.
 var dependencies = map[string][]string{
 	"kernel32.dll": {
-		"AssignProcessToJobObject", "CreateJobObjectW", "GetACP", "GetConsoleProcessList",
+		"AssignProcessToJobObject", "CreateJobObjectW", "GetACP", "GetConsoleProcessList", "GetConsoleScreenBufferInfo",
 		"GetConsoleWindow", "GetCurrentProcess", "GetDiskFreeSpaceExW", "GetDriveTypeW",
 		"GetModuleFileNameW", "GetModuleHandleW", "GlobalMemoryStatusEx", "Module32FirstW", "Module32NextW",
 		"ProcessIdToSessionId", "QueryFullProcessImageNameW", "SetConsoleOutputCP",
-		"SetInformationJobObject", "SetStdHandle",
+		"SetConsoleTextAttribute", "SetInformationJobObject", "SetStdHandle",
 	},
 	"ntdll.dll":   {"RtlGetVersion"},
 	"shell32.dll": {"Shell_NotifyIconW"},
@@ -886,31 +887,59 @@ func trimEvent(b string) string {
 	return strings.Join(keep, "\n")
 }
 
-// explainPort says why a port could not be had: who is holding it, or whether
-// Windows has fenced it off. Hyper-V, WSL and Docker reserve ranges of ports
-// that can move at every boot, and a port inside one fails with "access
-// permissions" even though nothing is listening on it.
+// explainPort writes to the -log log why a port could not be had: who is
+// holding it, or whether Windows has fenced it off.
 func explainPort(port int) {
 	if !diagOn {
 		return
 	}
-	out, err := command(15*time.Second, "", system32("NETSTAT.EXE"), "-ano")
-	if err == nil {
-		procs := processList()
-		suffix := ":" + strconv.Itoa(port)
-		for _, line := range strings.Split(out, "\n") {
-			f := strings.Fields(line)
-			if len(f) < 5 || !strings.EqualFold(f[0], "TCP") || !strings.HasSuffix(f[1], suffix) || !strings.EqualFold(f[3], "LISTENING") {
-				continue
-			}
-			pid, _ := strconv.Atoi(f[4])
-			name := procs[uint32(pid)].name
-			if p := imagePath(uint32(pid)); p != "" {
-				name = p
-			}
-			tracef("port %d is held by pid %d %s (listening on %s)", port, pid, name, f[1])
-		}
+	for _, h := range portHolders(port) {
+		tracef("port %d is held by %s", port, h)
 	}
+	for _, r := range portReservations(port) {
+		tracef("port %d is inside a range Windows has reserved (%s), usually for Hyper-V, WSL or Docker:"+
+			" choose another port with -port", port, r)
+	}
+}
+
+// portHolders names the programs listening on a port, each as "pid 1234
+// C:\path\to\program.exe".
+func portHolders(port int) []string {
+	out, err := command(15*time.Second, "", system32("NETSTAT.EXE"), "-ano")
+	if err != nil {
+		return nil
+	}
+	var held []string
+	seen := map[int]bool{}
+	procs := processList()
+	suffix := ":" + strconv.Itoa(port)
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 5 || !strings.EqualFold(f[0], "TCP") || !strings.HasSuffix(f[1], suffix) || !strings.EqualFold(f[3], "LISTENING") {
+			continue
+		}
+		pid, _ := strconv.Atoi(f[4])
+		if seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		name := procs[uint32(pid)].name
+		if p := imagePath(uint32(pid)); p != "" {
+			name = p
+		}
+		if name == "" {
+			name = "(a program this account cannot see)"
+		}
+		held = append(held, fmt.Sprintf("pid %d %s", pid, name))
+	}
+	return held
+}
+
+// portReservations lists the ranges Windows has set aside that take in a port.
+// Hyper-V, WSL and Docker reserve ranges that can move at every boot, and a port
+// inside one fails with "access permissions" even though nothing is listening.
+func portReservations(port int) []string {
+	var found []string
 	for _, proto := range []string{"ipv4", "ipv6"} {
 		out, err := command(15*time.Second, "", system32("netsh.exe"), "interface", proto, "show", "excludedportrange", "protocol=tcp")
 		if err != nil {
@@ -924,9 +953,16 @@ func explainPort(port int) {
 			lo, e1 := strconv.Atoi(f[0])
 			hi, e2 := strconv.Atoi(f[1])
 			if e1 == nil && e2 == nil && port >= lo && port <= hi {
-				tracef("port %d is inside a range Windows has reserved (%s %d-%d), usually for Hyper-V, WSL or Docker:"+
-					" choose another port with -port", port, proto, lo, hi)
+				found = append(found, fmt.Sprintf("%s %d-%d", proto, lo, hi))
 			}
 		}
 	}
+	return found
+}
+
+// portRefused reports whether a listen failed because Windows would not allow
+// the port - a reserved range, or security software - rather than because
+// another program already has it.
+func portRefused(err error) bool {
+	return errors.Is(err, syscall.Errno(10013)) // WSAEACCES
 }
