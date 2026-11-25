@@ -275,3 +275,42 @@ func TestCrossSitePostsRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyOurOwnNamesAreServed(t *testing.T) {
+	for host, want := range map[string]bool{
+		"":                          true,
+		"10.0.0.10:8080":            true,
+		"[::1]:8080":                true,
+		"[fe80::1%12]:8080":         true,
+		"localhost:8080":            true,
+		"LOCALHOST.":                true,
+		"files.localhost:8080":      true,
+		"drop.office.lan:8080":      true, // the -host setting
+		"desktop-abc:8080":          true, // this computer's name
+		"Desktop-ABC.home.arpa":     true,
+		"attacker.example:8080":     false,
+		"desktop-abc-evil.example":  false,
+		"office.lan:8080":           false,
+		"rebind.attacker.test:8080": false,
+	} {
+		if got := hostIsOurs(host, "drop.office.lan", "desktop-abc"); got != want {
+			t.Errorf("hostIsOurs(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+func TestSettingsFileWithAByteOrderMark(t *testing.T) {
+	values, err := parseTOML("\ufeffport = 9123\r\n# a comment\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["port"] != int64(9123) {
+		t.Fatalf("port read as %v, want 9123", values["port"])
+	}
+	if _, err := parseTOML("\ufeff# File Drop settings.\nport = 1\n"); err != nil {
+		t.Fatalf("a comment after the mark: %v", err)
+	}
+	if _, err := parseTOML("\xff\xfep\x00o\x00r\x00t\x00"); err == nil || !strings.Contains(err.Error(), "UTF-16") {
+		t.Fatalf("UTF-16 was not called out: %v", err)
+	}
+}

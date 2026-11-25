@@ -350,7 +350,10 @@ func main() {
 		hostMu.RLock()
 		ready := internetURL != ""
 		hostMu.RUnlock()
-		writeJSON(w, http.StatusOK, map[string]any{"internet": ready})
+		// Who is answering, too: a second start of the program asks, so that
+		// finding itself already running is not mistaken for the port being
+		// taken by something else. See sameCopyRunning.
+		writeJSON(w, http.StatusOK, map[string]any{"internet": ready, "app": statusApp, "config": configPath})
 	})
 
 	mux.HandleFunc("/qr.png", func(w http.ResponseWriter, r *http.Request) {
@@ -546,8 +549,19 @@ func main() {
 			return
 		}
 
+		// The port the replacement will ask for, which is not this one when it
+		// has just been changed in the settings panel: the page waiting for the
+		// server to come back has to look for it there. -port on the command line
+		// still wins over the file, as it does at any start.
+		nextPort := currentSettings().Port
+		if portOverride != 0 {
+			nextPort = portOverride
+		} else if portTyped() {
+			nextPort = *flagPort
+		}
+
 		log.Printf("restarting")
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": nextPort})
 
 		// Answer first and tear down afterwards: the reply travels over a
 		// connection this is about to close.
@@ -784,7 +798,7 @@ func main() {
 
 	srv = &http.Server{
 		Addr:              ln.Addr().String(),
-		Handler:           sameOrigin(logRequests(mux)),
+		Handler:           knownHost(cfg.Host, sameOrigin(logRequests(mux))),
 		ReadHeaderTimeout: 20 * time.Second,
 		// No read/write timeouts on purpose: a phone on a weak signal can spend a
 		// long while pushing a batch of videos, and cutting it off mid-upload
@@ -1856,6 +1870,73 @@ func sameOrigin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// knownHost turns away a request addressed to a name this machine does not go
+// by. sameOrigin cannot catch this one: a website can point a name of its own
+// at this machine's address ("DNS rebinding"), after which its page and this
+// server count as the same origin, and the page could read the settings -
+// access code included - and drive every route sameOrigin guards. The name it
+// used still arrives in the Host header, though, and it is not one of ours.
+//
+// Ours are an IP address, localhost, the -host setting, and this computer's
+// own name (with any domain after it, as a router or a company network adds).
+// Only the local listener is behind this: the internet route arrives under the
+// tunnel's name and has its access code to guard it.
+func knownHost(configured string, next http.Handler) http.Handler {
+	machine, _ := os.Hostname()
+	machine = strings.ToLower(machine)
+	configured = strings.ToLower(strings.TrimSuffix(configured, "."))
+
+	var (
+		mu      sync.Mutex
+		refused = map[string]bool{}
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hostIsOurs(r.Host, configured, machine) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Said once per name, and only for the first few names, so a page
+		// trying many cannot fill the console.
+		mu.Lock()
+		first := !refused[r.Host] && len(refused) < 20
+		if first {
+			refused[r.Host] = true
+		}
+		mu.Unlock()
+		if first {
+			log.Printf("refused a request addressed to %q, which is not a name this machine goes by"+
+				" - if it is, give it with -host", r.Host)
+		}
+		http.Error(w, "File Drop does not answer to that name. Use this computer's IP address, or set the name with -host.",
+			http.StatusMisdirectedRequest)
+	})
+}
+
+func hostIsOurs(hostport, configured, machine string) bool {
+	if hostport == "" {
+		return true // HTTP/1.0, which names no host at all
+	}
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i] // an IPv6 zone, as in fe80::1%12
+	}
+	switch {
+	case net.ParseIP(host) != nil:
+		return true
+	case host == "localhost" || strings.HasSuffix(host, ".localhost"):
+		return true
+	case configured != "" && host == configured:
+		return true
+	case machine != "" && (host == machine || strings.HasPrefix(host, machine+".")):
+		return true
+	}
+	return false
 }
 
 // requestIsOurs reports whether a request came from one of this server's own

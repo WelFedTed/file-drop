@@ -2,6 +2,8 @@ package main
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,5 +86,51 @@ func TestChildArgsCarryTheCorrectedPort(t *testing.T) {
 	portOverride = 9001
 	if got := strings.Join(childArgs(), " "); got != "-port 9000 -lan-only -port 9001" {
 		t.Fatalf("with an override: %q", got)
+	}
+}
+
+func TestSecondStartFindsItselfRunning(t *testing.T) {
+	oldPath, oldHolders := configPath, holdersOf
+	defer func() { configPath, holdersOf = oldPath, oldHolders }()
+	configPath = filepath.Join(t.TempDir(), settingsFile)
+	holdersOf = func(int) []string { return nil }
+
+	answer := func(config string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"internet": false, "app": statusApp, "config": config})
+		}))
+	}
+	portOf := func(s *httptest.Server) int { return s.Listener.Addr().(*net.TCPAddr).Port }
+
+	same := answer(strings.ToUpper(configPath))
+	defer same.Close()
+	if !sameCopyRunning(portOf(same)) {
+		t.Error("a File Drop with the same settings file was not recognised")
+	}
+
+	other := answer(filepath.Join(t.TempDir(), settingsFile))
+	defer other.Close()
+	if sameCopyRunning(portOf(other)) {
+		t.Error("a File Drop with different settings was taken for this one")
+	}
+
+	stranger := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("hello"))
+	}))
+	defer stranger.Close()
+	if sameCopyRunning(portOf(stranger)) {
+		t.Error("some other web server was taken for File Drop")
+	}
+}
+
+func TestSearchSkipsAPortOnlyLoopbackHolds(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	port := held.Addr().(*net.TCPAddr).Port
+	if !loopbackAnswers(port) {
+		t.Fatalf("port %d is listening on loopback but was not noticed", port)
 	}
 }

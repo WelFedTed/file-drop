@@ -946,12 +946,23 @@ refresh();
 // Restarting. The server answers, then goes away and comes back on the same
 // port a second or so later, so the page waits for it and reloads itself rather
 // than being left as a dead tab.
-function waitForServer(onGiveUp) {
+// port is where the server said it is coming back. When that is not the port
+// this page came from - the port was just changed in the settings - the page
+// waits there and moves itself across. A page cannot read an answer from
+// another port, but a request that gets one at all, even unreadable, is a
+// server that is up; one that gets none is still a failed fetch.
+function waitForServer(onGiveUp, port) {
+  var here = location.port || (location.protocol === 'https:' ? '443' : '80');
+  var moved = !!port && String(port) !== here;
+  var base = moved ? location.protocol + '//' + location.hostname + ':' + port : '';
   var tries = 0;
   var timer = setInterval(function () {
     tries++;
-    fetch('/status', { cache: 'no-store' }).then(function (r) {
-      if (r.ok) { clearInterval(timer); location.reload(); }
+    fetch(base + '/status', moved ? { mode: 'no-cors', cache: 'no-store' } : { cache: 'no-store' }).then(function (r) {
+      if (!moved && !r.ok) return;
+      clearInterval(timer);
+      if (moved) location.href = base + location.pathname + location.search;
+      else location.reload();
     }).catch(function () { /* still down, which is most of the point */ });
     if (tries > 60) { clearInterval(timer); if (onGiveUp) onGiveUp(); }
   }, 1000);
@@ -964,7 +975,7 @@ function restartServer(say, onFail) {
   say('Restarting…');
   fetch('/restart', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (d) {
     if (d && d.ok === false) { if (onFail) onFail(d.error); return; }
-    waitForServer(gaveUp);
+    waitForServer(gaveUp, d && d.port);
   }).catch(function () {
     // Losing the connection is a normal part of this, not a failure.
     waitForServer(gaveUp);

@@ -87,7 +87,7 @@ The panel's **Restart** button does that restart for you, so a changed port does
 not mean going back to a terminal you may have closed. It refuses while the form
 has unsaved edits, rather than discarding them; save first, or reopen the panel
 to get the stored values back. The page waits for the server to come back and
-reloads itself.
+reloads itself — on the new port, when that is what changed.
 
 **Light or dark** is under *On this machine*. `auto` follows whatever the browser
 showing `/host` is set to, which is what it has always done; `light` and `dark`
@@ -147,7 +147,9 @@ falls back to the default.
 A settings file that cannot be understood stops the server with the offending
 line, rather than being ignored — being quietly served on the wrong port is
 worse than not starting. Keys it does not recognise are skipped, so a file
-written by a later version still starts an earlier one.
+written by a later version still starts an earlier one. Save it as UTF-8 — the
+byte-order mark some editors add is fine, but UTF-16 (Notepad's "Unicode") is
+refused with a message saying so.
 
 ### When the port is taken
 
@@ -167,6 +169,10 @@ cannot start, so it does not just stop:
   console says to change the shortcut.
 - With nobody at a keyboard to ask — input redirected, or the copy started
   without a console — it stops with the reason, as before.
+- **When the port is held by File Drop itself** — started a second time with
+  the same settings file — it neither moves nor asks: it opens the running
+  copy's page and exits, so a second start cannot move the port out from under
+  printed QR codes.
 
 Any start-up error in a console window that would close with the program, as
 it does when started from Explorer or a shortcut, now waits for **Enter**
@@ -755,6 +761,15 @@ on some other site told the browser to make. A site you merely visit cannot
 empty your drop folder, repoint it, or swap the program on disk. The check reads
 `Sec-Fetch-Site`, falling back to `Origin` on older browsers; something that
 sends neither, `curl` and friends, is not a drive-by and is let through.
+
+A website can also get around that by pointing a name of its own at your
+machine's address — "DNS rebinding" — after which the browser counts its page
+and File Drop as the same site. So the local listener only answers to names
+this machine goes by: an IP address, `localhost`, this computer's own name
+(with any domain after it), and whatever `-host` is set to. Anything else is
+refused, and the console says which name it was. If you reach File Drop
+through a name of your own — a DNS entry on your router, say — give it as
+`-host`.
 
 The firewall button is in the same bracket: someone else on the LAN could make
 an administrator prompt appear on your screen, but only whoever is sitting at

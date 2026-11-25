@@ -538,6 +538,17 @@ func assignInt(dst *int, key string, value any) error {
 // That is the whole shape of the file, and it keeps the program dependency-free
 // for the sake of nine lines of configuration.
 func parseTOML(src string) (map[string]any, error) {
+	// Notepad's "Unicode", and PowerShell's Out-File and > in Windows
+	// PowerShell 5.1, write UTF-16, which nothing below could read sensibly.
+	if strings.HasPrefix(src, "\xff\xfe") || strings.HasPrefix(src, "\xfe\xff") {
+		return nil, errors.New(`this file is saved as UTF-16 ("Unicode") - save it as UTF-8 instead`)
+	}
+	// The byte-order mark some editors put at the start of a UTF-8 file -
+	// Notepad before 2019, and Set-Content -Encoding UTF8 in Windows PowerShell
+	// 5.1. Left in, it is part of the first line, which then reads as neither a
+	// comment nor a setting.
+	src = strings.TrimPrefix(src, "\ufeff")
+
 	out := map[string]any{}
 	for n, line := range strings.Split(src, "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))

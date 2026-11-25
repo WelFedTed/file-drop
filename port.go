@@ -2,11 +2,15 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +27,11 @@ import (
 //     until one is free, and saves that one so the address stays put from then on.
 //   - On a port someone chose, moving silently would break whatever they chose
 //     it for, so it says so, loudly, and asks for another.
+//
+// Neither applies when what holds the port is File Drop itself, started a
+// second time: moving would save a new port over the one the first copy is
+// serving, and every printed QR code would go stale at the next start. That
+// copy's page is opened instead.
 
 // restartingEnv marks the copy a restart starts, which may ask for its port a
 // moment before the copy it replaces has finished letting go of it.
@@ -72,6 +81,12 @@ func claimPort(cfg *Settings) net.Listener {
 	typed := portTyped()
 	tracef("port %d could not be had: %v", want, err)
 
+	if sameCopyRunning(want) {
+		log.Printf("File Drop is already running on port %d - opening its page rather than starting a second copy", want)
+		openBrowser(fmt.Sprintf("http://localhost:%d/host", want))
+		exitNow(0, "File Drop was already running with the same settings")
+	}
+
 	var port int
 	if want == defaultPort && !typed {
 		explainPort(want)
@@ -108,11 +123,47 @@ func listenPatiently(s Settings, port int, patient bool) (net.Listener, error) {
 	}
 }
 
+// sameCopyRunning reports whether what holds a port is this File Drop again -
+// the same settings file, started a second time - rather than another program.
+func sameCopyRunning(port int) bool {
+	client := http.Client{
+		Timeout:   2 * time.Second,
+		Transport: &http.Transport{Proxy: nil},
+	}
+	if resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/status", port)); err == nil {
+		var st struct {
+			App    string `json:"app"`
+			Config string `json:"config"`
+		}
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&st)
+		resp.Body.Close()
+		if decodeErr == nil && st.App == statusApp {
+			return strings.EqualFold(filepath.Clean(st.Config), filepath.Clean(configPath))
+		}
+	}
+	// Earlier versions do not say what they are, but a port held by this very
+	// program file is held by File Drop.
+	self := " " + strings.ToLower(exePath())
+	for _, h := range holdersOf(port) {
+		if strings.HasSuffix(strings.ToLower(h), self) {
+			return true
+		}
+	}
+	return false
+}
+
+// holdersOf is portHolders, replaceable in tests - which run their web servers
+// inside the test program, and so inside "this very program file".
+var holdersOf = portHolders
+
+// statusApp is how /status says it is File Drop answering.
+const statusApp = "file-drop"
+
 // firstFreePort binds the first port from `from` upwards that can be had,
 // skipping the one the internet listener has been told to use.
 func firstFreePort(s Settings, from int) (net.Listener, int) {
 	for p := from; p <= 65535; p++ {
-		if p == s.PublicPort {
+		if p == s.PublicPort || loopbackAnswers(p) {
 			continue
 		}
 		if ln, err := net.Listen("tcp", listenAddr(s, p)); err == nil {
@@ -120,6 +171,19 @@ func firstFreePort(s Settings, from int) (net.Listener, int) {
 		}
 	}
 	return nil, 0
+}
+
+// loopbackAnswers reports whether something is already listening on
+// 127.0.0.1:port. Windows lets this program take the port on every address
+// even then, and the operator's own browser would then be talking to the other
+// program - another File Drop's internet listener, say - instead of this one.
+func loopbackAnswers(port int) bool {
+	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
 }
 
 // nextFreePort is the port firstFreePort would pick, without keeping it.
